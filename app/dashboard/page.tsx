@@ -227,9 +227,11 @@ export default function Dashboard() {
                 recentInputStateRootIndices: validityProof.rootIndices
             });
 
-            // 6. Verify & Fix Transaction Keys (The "Patch")
-            // V2 state trees/queues MUST be writable for unshielding (nullifying).
+            // 6. Verify & Fix Transaction Keys (The "Patch" v2)
+            // Fixes "writable privilege escalated" error by ensuring all State Trees/Queues are Writable.
             const requiredWritables = new Set<string>();
+
+            // A. Collect trees from hydrated accounts
             inputAccounts.forEach((acc: any) => {
                 if (acc.treeInfo) {
                     requiredWritables.add(acc.treeInfo.tree.toBase58());
@@ -237,22 +239,28 @@ export default function Dashboard() {
                 }
             });
 
-            console.log("DEBUG: Required Writable Accounts (Dynamic):", Array.from(requiredWritables));
+            // B. Explicitly add the known problematic V2 Tree if not already present
+            // This is the tree commonly used on Devnet that throws the error
+            requiredWritables.add("smt2rJAFdyJJupwMKAqTNAJwvjhmiZ4JYGZmbVRw1Ho");
 
-            // Scan instruction keys
+            console.log("DEBUG: Required Writable Accounts:", Array.from(requiredWritables));
+
+            // C. Patch the Instruction Keys
             const keys = instruction.keys;
             let patched = false;
 
             requiredWritables.forEach(req => {
                 const keyIndex = keys.findIndex(k => k.pubkey.toBase58() === req);
                 if (keyIndex >= 0) {
+                    // Update existing key
                     if (!keys[keyIndex].isWritable) {
-                        console.warn(`[Fix] Upgrading existing key ${req} to WRITABLE`);
+                        console.log(`[Fix] Upgrading existing key ${req} to WRITABLE`);
                         keys[keyIndex].isWritable = true;
                         patched = true;
                     }
                 } else {
-                    console.warn(`[Fix] Appending missing WRITABLE key ${req}`);
+                    // Append missing key
+                    console.log(`[Fix] Appending missing WRITABLE key ${req}`);
                     keys.push({
                         pubkey: new PublicKey(req),
                         isSigner: false,
@@ -264,6 +272,8 @@ export default function Dashboard() {
 
             if (patched) {
                 console.log("Transaction keys were dynamically patched for V2 compatibility.");
+            } else {
+                console.log("No patching was needed (keys were already writable).");
             }
 
             const transaction = new Transaction().add(instruction);
