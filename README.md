@@ -1,36 +1,111 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Stealth Link 🥷🔗
+> **The Privacy-First "Link-in-Bio" for Solana.**
 
-## Getting Started
+[![Built with Solana Blinks](https://img.shields.io/badge/Built_with-Solana_Blinks-9945FF)](https://solana.com/docs/advanced/actions)
+[![Powered by Light Protocol](https://img.shields.io/badge/Privacy_by-Light_Protocol-000000)](https://lightprotocol.com)
+[![Indexed by Helius](https://img.shields.io/badge/Indexed_by-Helius-orange)](https://helius.dev)
 
-First, run the development server:
+**Stealth Link** allows creators, developers, and anons to receive SOL donations publicly on Twitter/X without revealing their main wallet's balance or transaction history. It bridges the viral distribution of **Solana Blinks** with the ZK-privacy of **Light Protocol**.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 🛑 The Problem
+In the Web3 creator economy, "doxxing your wallet" is the cost of doing business.
+*   **Public Donations**: If you put your SOL address in your bio, everyone can see your balance, your trade history, and your net worth.
+*   **The "Anon" Dilemma**: Privacy-focused users refuse to accept public tips because it links their persona to their financial identity.
+*   **Existing Tools (PIP.ME, etc.)**: Are great for UX, but offer **zero on-chain privacy**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## ✅ The Solution: Stealth Link
+A "Stealth Link" (e.g., `stealth.link/u/ariel`) unfurls as a **Solana Blink** on Twitter. When a fan clicks "Donate":
+1.  **Frontend**: The Blink constructs a transaction using **Light Protocol**.
+2.  **On-Chain**: The SOL is **Shielded** (compressed) into a private UTXO owned by the creator.
+3.  **Result**: The public explorer shows `Donor -> Light Protocol Pool`. The creator's personal wallet address never receives a public transfer. The link is broken.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The Creator manages these funds via a private **Dashboard**, where they can view their shielded balance and "Unshield" (withdraw) funds to a fresh exchange address when needed.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 🛠 Tech Stack & Sponsors
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **Privacy Engine** | [**Light Protocol**](https://lightprotocol.com) | Uses ZK Compression to shield SOL. We use `@lightprotocol/stateless.js` for `compress` (shield) and `decompress` (unshield) operations. |
+| **Distribution** | [**Solana Actions / Blinks**](https://solana.com/solutions/actions) | The donation interface is a Blink (`GET/POST` API) that works directly inside Twitter/X. |
+| **Infrastructure** | [**Helius**](https://helius.dev) | **Critical:** Standard RPCs cannot index ZK-compressed state. We rely on Helius ZK-enabled RPCs to fetch validity proofs and compressed balances. |
+| **Framework** | [**Next.js 14**](https://nextjs.org) | App Router handles both the Blink API (`/api/actions/...`) and the React Dashboard. |
+| **Styling** | [**Tailwind CSS**](https://tailwindcss.com) | For a clean, dark-mode "hacker" aesthetic. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## 🏗 Architecture (Inner Workings)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 1. The Blink (Data Ingestion)
+*   **Endpoint:** `/api/actions/donate/[username]`
+*   **Logic:**
+    *   **GET**: Returns metadata (Icon, Description, Action Buttons).
+    *   **POST**:
+        1.  Receives the Donor's Public Key.
+        2.  Derives/Lookups the Creator's Shield Address.
+        3.  Constructs a `LightSystemProgram.compress` instruction.
+        4.  Returns the unsigned transaction to the user.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 2. The Shielding Process (Light Protocol)
+*   The transaction executes on Solana.
+*   SOL is deposited into the Light Protocol Program PDAs.
+*   A **Compressed UTXO** is created for the Creator.
+*   **Privacy**: The on-chain observer sees a transfer to the Light Program, not the Creator.
+
+### 3. The Dashboard (Unshielding)
+*   **Connection**: Creator connects via Wallet Adapter.
+*   **Sync**: The app queries the Helius RPC using `getCompressedAccountsByOwner`.
+*   **Unshield**:
+    1.  User clicks "Unshield".
+    2.  App fetches a **Validity Proof** (Merkle proof) from Helius.
+    3.  App constructs a `LightSystemProgram.decompress` transaction.
+    4.  Funds are moved from the Shielded Pool -> Public Wallet.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+*   Node.js 18+
+*   **Helius API Key** (Required for Devnet ZK-Compression support).
+
+### Installation
+
+1.  **Clone & Install**
+    ```bash
+    git clone https://github.com/your-username/solana-stealth.git
+    cd solana-stealth
+    npm install
+    # or
+    yarn install
+    ```
+
+2.  **Configure Environment**
+    Create a `.env.local` file:
+    ```bash
+    # Get this from https://dashboard.helius.dev/
+    NEXT_PUBLIC_HELIUS_RPC_URL=https://devnet.helius-rpc.com/?api-key=YOUR_KEY
+    ```
+
+3.  **Run Locally**
+    ```bash
+    npm run dev
+    ```
+
+4.  **Test the Blink**
+    *   Go to `http://localhost:3000/api/actions/donate/ariel` to see the JSON.
+    *   Use [dial.to](https://dial.to) and paste your local URL (or ngrok tunnel) to test the UI.
+
+---
+
+## 🔮 Future Roadmap
+*   **Map Usernames**: Integrate a real database (Postgres) to map `username` -> `wallet`.
+*   **Donor Privacy**: Implement a "Relayer" service to hide the donor's address as well (currently, donor pays for gas, so they are visible).
+*   **SPL Token Support**: Allow shielding of USDC/BONK.
+
+---
+
+**Hackathon Track**: Signal for Web3 / Infrastructure.
