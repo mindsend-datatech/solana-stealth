@@ -6,7 +6,9 @@ describe("stealth-registry", () => {
   // Configure the client to use the local cluster.
   anchor.setProvider(anchor.AnchorProvider.env());
 
-  const program = anchor.workspace.stealthRegistry as Program<StealthRegistry>;
+  // const program = anchor.workspace.stealthRegistry as Program<StealthRegistry>;
+  // Manual program ID check for devnet verification
+  const programId = new anchor.web3.PublicKey("3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2");
 
   it("Is initialized!", async () => {
     // Add your test here.

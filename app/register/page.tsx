@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Shield, Terminal, Zap, ExternalLink, ArrowRight, Check, Loader2, AlertTriangle, Wallet } from "lucide-react";
 
 // Stealth Registry Program ID (Devnet)
-const STEALTH_REGISTRY_PROGRAM_ID = new PublicKey("Y44tb2AA1JhtEyh7th7EUQQLt6qfC4dd7bdkHnUzfGC");
+const STEALTH_REGISTRY_PROGRAM_ID = new PublicKey("3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2");
 
 // Anchor discriminator for "register" instruction
 // sha256("global:register")[0..8] - precomputed
