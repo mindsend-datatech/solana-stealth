@@ -56,13 +56,11 @@ pub mod stealth_registry {
 #[instruction(handle: String, destination_pubkey: Pubkey)]
 pub struct Register<'info> {
     #[account(mut)]
-    pub payer: Signer<'info>,
-
     pub authority: Signer<'info>,
 
     #[account(
         init,
-        payer = payer,
+        payer = authority,
         space = 8 + RegistryEntry::INIT_SPACE,
         seeds = [b"stealth", handle.as_bytes()],
         bump
