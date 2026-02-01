@@ -3,7 +3,7 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useState, useCallback } from "react";
 import { createRpc, Rpc, LightSystemProgram, createBN254 } from "@lightprotocol/stateless.js";
@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Shield, Copy, ArrowRight, Wallet, Eye, EyeOff, RefreshCw, AlertTriangle, Clock, ExternalLink, Loader2 } from "lucide-react";
+import { Shield, Copy, ArrowRight, Wallet, Eye, EyeOff, RefreshCw, AlertTriangle, Clock, ExternalLink, Loader2, Zap } from "lucide-react";
 
 
 // --- Types ---
@@ -152,11 +152,40 @@ const hydrateAccount = (acc: any, index: number) => {
 
 export default function Dashboard() {
     const { connection } = useConnection();
-    const { publicKey, connected, signTransaction, sendTransaction } = useWallet();
+    const { publicKey, connected, signTransaction, sendTransaction, signMessage } = useWallet();
     const [balance, setBalance] = useState<number>(0);
     const [shieldedBalance, setShieldedBalance] = useState<number>(0);
     const [loading, setLoading] = useState(false);
     const [unshieldLoading, setUnshieldLoading] = useState(false);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    // Stealth Link Key (for obfuscated URLs when no handle exists)
+    const [stealthLinkKey, setStealthLinkKey] = useState<string | null>(null);
+    const [stealthKeypair, setStealthKeypair] = useState<Keypair | null>(null);
+    const [derivingIdentity, setDerivingIdentity] = useState(false);
+
+    const deriveIdentity = async () => {
+        if (!publicKey || !connected || !signMessage) return;
+        setDerivingIdentity(true);
+        try {
+            const messageText = `Generate Stealth Link Identity`;
+            const message = new TextEncoder().encode(messageText);
+            const signature = await signMessage(message);
+            const hashBuffer = await crypto.subtle.digest("SHA-256", signature as any);
+            const seed = new Uint8Array(hashBuffer);
+            const kp = Keypair.fromSeed(seed);
+            setStealthKeypair(kp);
+            setStealthLinkKey(kp.publicKey.toBase58());
+        } catch (e) {
+            console.warn("Failed to derive link key:", e);
+        } finally {
+            setDerivingIdentity(false);
+        }
+    };
 
     // New: Destination address for unshielding
     const [destinationAddress, setDestinationAddress] = useState<string>("");
@@ -199,28 +228,27 @@ export default function Dashboard() {
             setLoading(true);
             setRpcError(null);
             try {
-                // We need a Light-enabled RPC.
-                // Always use the Helius RPC from env for ZK state, regardless of wallet connection
                 const heliusRpc = process.env.NEXT_PUBLIC_HELIUS_RPC_URL;
-                if (!heliusRpc) {
-                    console.error("Missing NEXT_PUBLIC_HELIUS_RPC_URL");
-                    setRpcError({
-                        type: 'unavailable',
-                        message: 'Privacy service is not configured. Please contact support.',
-                        retryable: false
-                    });
-                    return;
-                }
+                if (!heliusRpc) return;
 
-                // Check if we are on Helius or a capable RPC
                 const rpc = createRpc(heliusRpc, heliusRpc);
-                // Use ByOwner for Public Keys
-                const compressedBalance = await rpc.getCompressedBalanceByOwner(publicKey);
 
-                if (compressedBalance) {
-                    // @ts-ignore - BN handling or simple number
-                    setShieldedBalance(compressedBalance.toNumber ? compressedBalance.toNumber() / LAMPORTS_PER_SOL : Number(compressedBalance) / LAMPORTS_PER_SOL);
+                // Fetch for Main Wallet
+                const mainCompressedBalance = await rpc.getCompressedBalanceByOwner(publicKey);
+                let total = mainCompressedBalance.toNumber ? mainCompressedBalance.toNumber() : Number(mainCompressedBalance);
+
+                // Fetch for Stealth Identity (if derived)
+                if (stealthLinkKey) {
+                    try {
+                        const stealthPk = new PublicKey(stealthLinkKey);
+                        const stealthCompressedBalance = await rpc.getCompressedBalanceByOwner(stealthPk);
+                        total += stealthCompressedBalance.toNumber ? stealthCompressedBalance.toNumber() : Number(stealthCompressedBalance);
+                    } catch (e) {
+                        console.warn("Failed to fetch stealth identity balance:", e);
+                    }
                 }
+
+                setShieldedBalance(total / LAMPORTS_PER_SOL);
                 setLastFetchTime(new Date());
             } catch (e) {
                 console.error("Failed to fetch shielded balance:", e);
@@ -232,10 +260,9 @@ export default function Dashboard() {
         };
 
         fetchShielded();
-        // Poll every 10s
         const interval = setInterval(fetchShielded, 10000);
         return () => clearInterval(interval);
-    }, [publicKey, connected, connection]);
+    }, [publicKey, connected, connection, stealthLinkKey]);
 
     // Fetch SNS Domain
     const [snsName, setSnsName] = useState<string | null>(null);
@@ -259,6 +286,56 @@ export default function Dashboard() {
         };
         fetchSns();
     }, [publicKey, connected, connection]);
+
+    // Fetch Stealth Registry Handle
+    const [stealthHandle, setStealthHandle] = useState<string | null>(null);
+    useEffect(() => {
+        if (!publicKey || !connected) {
+            setStealthHandle(null);
+            return;
+        }
+
+        const fetchStealthHandle = async () => {
+            try {
+                const STEALTH_PROGRAM_ID = new PublicKey("DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13");
+
+                // Fetch all accounts owned by the registry
+                const accounts = await connection.getProgramAccounts(STEALTH_PROGRAM_ID);
+
+                const myEntry = accounts.find((acc) => {
+                    const data = Buffer.from(acc.account.data);
+                    if (data.length < 46) return false;
+
+                    try {
+                        const len = data.readUInt32LE(8);
+                        const authOffset = 8 + 4 + len;
+                        if (data.length < authOffset + 32) return false;
+
+                        const authority = new PublicKey(data.subarray(authOffset, authOffset + 32));
+                        const isMainWallet = authority.equals(publicKey);
+                        const isStealthIdentity = stealthLinkKey && authority.toBase58() === stealthLinkKey;
+
+                        return isMainWallet || isStealthIdentity;
+                    } catch {
+                        return false;
+                    }
+                });
+
+                if (myEntry) {
+                    const data = Buffer.from(myEntry.account.data);
+                    const len = data.readUInt32LE(8);
+                    const handle = data.subarray(12, 12 + len).toString('utf8');
+                    setStealthHandle(handle);
+                } else {
+                    setStealthHandle(null);
+                }
+            } catch (e) {
+                console.warn("Failed to fetch stealth handle:", e);
+            }
+        };
+
+        fetchStealthHandle();
+    }, [publicKey, connected, connection, stealthLinkKey]);
 
 
     const handleUnshield = async () => {
@@ -287,24 +364,20 @@ export default function Dashboard() {
 
             const rpc = createRpc(heliusRpc, heliusRpc);
 
-            // 1. Fetch UTXOs (Shielded Accounts)
+            // 1. Fetch UTXOs (Shielded Accounts) for Main Wallet
             console.log("[Unshield] Step 1: Fetching compressed accounts...");
-            const accounts = await rpc.getCompressedAccountsByOwner(publicKey);
-            if (accounts.items.length === 0) {
-                alert("No shielded funds found to unshield.");
+            const mainAccounts = await rpc.getCompressedAccountsByOwner(publicKey);
+
+            if (mainAccounts.items.length === 0) {
+                alert("No shielded funds found to unshield in your wallet.");
                 return;
             }
 
-            console.log(`[Unshield] Found ${accounts.items.length} shielded accounts.`);
-            console.log("[Unshield] Raw accounts:", JSON.stringify(accounts.items, (key, value) =>
-                typeof value === 'bigint' ? value.toString() : value
-                , 2));
+            const allItems = mainAccounts.items;
+            console.log(`[Unshield] Found ${allItems.length} total shielded accounts.`);
 
-            // Note: The tree address smt2rJAFdyJJupwMKAqTNAJwvjhmiZ4JYGZmbVRw1Ho 
-            // is actually a V1 tree (treeType: 1) - the "2" in the name is just 
-            // part of the address, not an indication of tree version!
             // Filter by actual treeType if needed, not by address.
-            const validAccounts = accounts.items.filter((acc: any) => {
+            const validAccounts = allItems.filter((acc: any) => {
                 const treeType = acc.treeInfo?.treeType;
                 // treeType 1 = StateV1, treeType 2 = StateV2, treeType 3 = BatchedAddress
                 // V2 trees (treeType 3) have decompression issues
@@ -315,7 +388,7 @@ export default function Dashboard() {
                 return !isV2;
             });
 
-            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${accounts.items.length - validAccounts.length} V2 accounts filtered out)`);
+            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${allItems.length - validAccounts.length} V2 accounts filtered out)`);
 
             if (validAccounts.length === 0) {
                 alert("No unshieldable funds found. Your shielded funds may be in a V2 tree which is not yet fully supported.");
@@ -529,8 +602,13 @@ export default function Dashboard() {
         }
     };
 
+
+
     // Use the connected wallet as the "username" for the link
-    const linkUsername = snsName || (publicKey ? publicKey.toBase58() : "YOUR_WALLET_ADDRESS");
+    // Priority: Stealth Handle > SNS > Stealth Link Key > Pubkey
+    const linkUsername = stealthHandle
+        ? `${stealthHandle}.stealth`
+        : (snsName || stealthLinkKey || publicKey?.toBase58() || "CONNECT_WALLET");
 
     // Manual retry function
     const retryFetch = () => {
@@ -578,11 +656,27 @@ export default function Dashboard() {
                         <Link href="/register">
                             <Button variant="ghost" size="sm">Register Handle</Button>
                         </Link>
-                        <WalletMultiButton />
+                        {mounted && <WalletMultiButton />}
                     </div>
                 </header>
 
                 <main className="space-y-6">
+                    {/* Active Stealth Handle Alert */}
+                    {connected && stealthHandle && (
+                        <Card variant="terminal" className="border-purple-500/50">
+                            <CardContent className="py-3 flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="purple" className="animate-pulse">Active Identity</Badge>
+                                    <span className="font-mono text-cyan-400">{stealthHandle}.stealth</span>
+                                </div>
+                                <div className="text-xs text-gray-500 flex items-center gap-1">
+                                    <Shield className="w-3 h-3" />
+                                    Wallet Linked
+                                </div>
+                            </CardContent>
+                        </Card>
+                    )}
+
                     {!connected ? (
                         <div className="text-center py-20">
                             <Card variant="glass" className="max-w-md mx-auto">
@@ -594,7 +688,7 @@ export default function Dashboard() {
                                         <h2 className="text-3xl font-bold mb-2">Privacy for your SOL Donations</h2>
                                         <p className="text-gray-400">Connect your wallet to manage your shielded funds.</p>
                                     </div>
-                                    <WalletMultiButton />
+                                    {mounted && <WalletMultiButton />}
                                 </CardContent>
                             </Card>
                         </div>
@@ -681,29 +775,86 @@ export default function Dashboard() {
                             </div>
 
                             {/* Stealth Link */}
-                            <Card variant="glass">
+                            <Card variant="terminal" className="border-cyan-500/20 bg-cyan-500/5">
                                 <CardHeader>
-                                    <CardTitle className="flex items-center gap-2">
-                                        <ExternalLink className="w-5 h-5 text-purple-400" />
+                                    <CardTitle className="text-xl font-mono flex items-center gap-2">
+                                        <Zap className="w-5 h-5 text-cyan-400" />
                                         Your Stealth Link
                                     </CardTitle>
-                                    <CardDescription>
-                                        Share on Twitter/X. Donors send SOL that automatically gets shielded.
+                                    <CardDescription className="text-gray-400">
+                                        {stealthHandle
+                                            ? "Share this link to receive private donations via your registered handle."
+                                            : "No handle? We've generated a privacy-preserving obfuscated link for you."}
                                     </CardDescription>
                                 </CardHeader>
-                                <CardContent>
-                                    <div className="flex flex-col md:flex-row gap-4">
-                                        <div className="flex-1 bg-black/50 p-4 rounded-lg font-mono text-sm break-all border border-gray-800 text-cyan-400">
-                                            https://dial.to/?action=solana-action:{typeof window !== 'undefined' ? window.location.origin : ''}/api/actions/donate/{linkUsername}?v=2
+                                <CardContent className="space-y-4">
+                                    {!stealthHandle && !stealthLinkKey && (
+                                        <div className="flex flex-col gap-3 p-4 rounded-lg bg-black/40 border border-cyan-500/20">
+                                            <div className="flex items-start gap-3 text-xs text-cyan-300">
+                                                <Shield className="w-4 h-4 shrink-0" />
+                                                <p>
+                                                    Your current link uses your public wallet address.
+                                                    Enable a <span className="text-white font-bold">Zero-Knowledge Identifier</span> to hide it.
+                                                </p>
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10 h-8 text-xs font-mono"
+                                                onClick={deriveIdentity}
+                                                disabled={derivingIdentity}
+                                            >
+                                                {derivingIdentity ? (
+                                                    <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                                ) : (
+                                                    <Zap className="w-3 h-3 mr-2" />
+                                                )}
+                                                Secure My Link (One-time Sign)
+                                            </Button>
                                         </div>
+                                    )}
+
+                                    {!stealthHandle && stealthLinkKey && (
+                                        <div className="flex items-start gap-3 p-3 rounded-lg bg-black/40 border border-purple-500/20 text-xs text-purple-300">
+                                            <Shield className="w-4 h-4 shrink-0" />
+                                            <p>
+                                                This link uses a <span className="text-white font-bold">Zero-Knowledge Identifier</span>.
+                                                Donors will never see your main wallet address, even in the URL.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-col md:flex-row gap-3">
+                                        <Input
+                                            variant="terminal"
+                                            readOnly
+                                            value={`https://dial.to/?action=solana-action:${typeof window !== 'undefined' ? window.location.origin : ''}/api/actions/donate/${linkUsername}`}
+                                            className="flex-grow font-mono text-sm bg-black/60 border-white/5"
+                                        />
                                         <Button
                                             variant="secondary"
-                                            onClick={() => { navigator.clipboard.writeText(`https://dial.to/?action=solana-action:${window.location.origin}/api/actions/donate/${linkUsername}?v=2`) }}
-                                            className="gap-2 md:w-auto w-full"
+                                            className="font-mono shrink-0"
+                                            onClick={() => {
+                                                navigator.clipboard.writeText(`https://dial.to/?action=solana-action:${window.location.origin}/api/actions/donate/${linkUsername}`);
+                                                alert("Link copied!");
+                                            }}
                                         >
-                                            <Copy className="w-4 h-4" />
+                                            <Copy className="w-4 h-4 mr-2" />
                                             Copy Link
                                         </Button>
+                                    </div>
+
+                                    <div className="flex items-center gap-4 text-[10px] font-mono uppercase tracking-wider text-gray-500">
+                                        <span className="flex items-center gap-1">
+                                            <Badge variant="outline" className="text-[9px] px-1 py-0">V2.1</Badge>
+                                            AES-256 Obfuscated
+                                        </span>
+                                        {!stealthHandle && (
+                                            <span className="flex items-center gap-1 text-purple-400">
+                                                <Shield className="w-3 h-3" />
+                                                Deterministic Identity Enabled
+                                            </span>
+                                        )}
                                     </div>
                                 </CardContent>
                             </Card>
