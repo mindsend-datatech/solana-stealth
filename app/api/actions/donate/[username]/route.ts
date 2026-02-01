@@ -25,12 +25,15 @@ export async function GET(
     const { username } = await params;
 
     let title = `Donate Privately`;
-    if (username.endsWith(".sol")) {
+    let description = `Support this creator with a shielded donation. Your funds will be compressed into a private UTXO. Privacy by Default.`;
+
+    if (username.toLowerCase().endsWith(".sol") || username.toLowerCase().endsWith(".stealth")) {
         title = `Donate Privately to ${username} (Secure v2)`;
+        description = `Support this creator with a shielded donation. Your funds will be compressed into a private UTXO owned by ${username}. Privacy by Default.`;
     } else {
         try {
             new PublicKey(username);
-            title = `Donate Privately to ${username.slice(0, 4)}...${username.slice(-4)} (Secure v2)`;
+            title = `Donate Privately (Secure v2)`;
         } catch {
             title = "Invalid Creator Address";
         }
@@ -39,7 +42,7 @@ export async function GET(
     const payload: ActionGetResponse = {
         title,
         icon: new URL("/stealth-icon.png", request.url).toString(),
-        description: `Support this creator with a shielded donation. Your funds will be compressed into a private UTXO owned by ${username}. Privacy by Default.`,
+        description,
         label: "Donate 0.1 SOL",
         links: {
             actions: [
@@ -230,7 +233,7 @@ export async function POST(
             fields: {
                 type: 'transaction',
                 transaction,
-                message: `Shielding ${amountSOL} SOL to ${username.slice(0, 4)}... 🥷`,
+                message: `Shielding ${amountSOL} SOL to private UTXO 🥷`,
             },
         });
 
