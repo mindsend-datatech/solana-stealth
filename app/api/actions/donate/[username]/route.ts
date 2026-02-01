@@ -88,7 +88,7 @@ export async function POST(
         const amountStr = url.searchParams.get("amount") || "0.1";
 
         // Validate amount
-        let amountSOL = parseFloat(amountStr);
+        const amountSOL = parseFloat(amountStr);
         if (isNaN(amountSOL) || amountSOL <= 0) {
             return Response.json({ error: "Invalid amount" }, { status: 400, headers: ACTIONS_CORS_HEADERS });
         }
@@ -116,16 +116,54 @@ export async function POST(
                 }
                 recipientPubkey = registry.owner;
                 console.log(`Resolved ${username} -> ${recipientPubkey.toBase58()}`);
-            } catch (e) {
-                console.error(`Failed to resolve .sol domain ${username}:`, e);
+            } catch (_e) {
+                console.error(`Failed to resolve .sol domain ${username}:`, _e);
                 return Response.json({ error: `Could not resolve .sol domain: ${username}` }, { status: 400, headers: ACTIONS_CORS_HEADERS });
+            }
+        } else if (username.toLowerCase().endsWith(".stealth")) {
+            // --- Custom Registry Resolution (.stealth) ---
+            try {
+                const handle = username.slice(0, -8); // remove .stealth
+                const PROGRAM_ID = new PublicKey("Y44tb2AA1JhtEyh7th7EUQQLt6qfC4dd7bdkHnUzfGC");
+
+                // Derive PDA: [b"stealth", handle.as_bytes()]
+                const [pda] = PublicKey.findProgramAddressSync(
+                    [Buffer.from("stealth"), Buffer.from(handle)],
+                    PROGRAM_ID
+                );
+
+                const rpcUrl = process.env.NEXT_PUBLIC_HELIUS_RPC_URL;
+                // Use a standard connection for fetching account info
+                const connection = new Connection(rpcUrl || "https://api.devnet.solana.com", "confirmed");
+
+                const accountInfo = await connection.getAccountInfo(pda);
+                if (!accountInfo) {
+                    throw new Error(`Handle ${username} not registered.`);
+                }
+
+                // Deserialization (Manual to avoid heavy Anchor deps if possible, or use Program)
+                // Layout: [8 byte discriminator] + [4 byte len] + [handle bytes] + [32 byte pubkey] + [1 byte bump]
+                // We know authority is at offset 8 + 4 + handle.length.
+                // Let's rely on the layout structure defined in the IDL/Manual check
+
+                // Rust String serialization: 4 bytes len + bytes
+                const handleLen = accountInfo.data.readUInt32LE(8);
+                const authorityOffset = 8 + 4 + handleLen;
+                const authorityBytes = accountInfo.data.subarray(authorityOffset, authorityOffset + 32);
+                recipientPubkey = new PublicKey(authorityBytes);
+
+                console.log(`Resolved ${username} -> ${recipientPubkey.toBase58()}`);
+
+            } catch (_e) {
+                console.error(`Failed to resolve .stealth domain ${username}:`, _e);
+                return Response.json({ error: `Could not resolve .stealth domain: ${username}. Ensure it is registered.` }, { status: 400, headers: ACTIONS_CORS_HEADERS });
             }
         } else {
             // Standard Public Key
             try {
                 recipientPubkey = new PublicKey(username);
-            } catch (e) {
-                return Response.json({ error: "Invalid Creator Address: Must be a Solana Public Key or .sol domain" }, { status: 400, headers: ACTIONS_CORS_HEADERS });
+            } catch {
+                return Response.json({ error: "Invalid Creator Address: Must be a Solana Public Key, .sol, or .stealth domain" }, { status: 400, headers: ACTIONS_CORS_HEADERS });
             }
         }
 
@@ -137,23 +175,37 @@ export async function POST(
         }
 
         const connection = new Connection(rpcUrl, "confirmed");
-        let transaction = new Transaction();
+        const transaction = new Transaction();
 
         // --- Light Protocol Shielding ---
         try {
             const rpc = createRpc(rpcUrl, rpcUrl);
             const stateTrees = await rpc.getStateTreeInfos();
+
+            // Log ALL available trees for debugging
+            console.log(`[Donate] Found ${stateTrees.length} state trees:`);
+            stateTrees.forEach((t, i) => {
+                console.log(`  [${i}] Tree: ${t.tree.toBase58()}, Queue: ${t.queue.toBase58()}, Type: ${t.treeType}`);
+            });
+
             if (stateTrees.length === 0) {
                 throw new Error("No state trees found on RPC.");
             }
 
-            // Filter for State Trees (TreeType.StateV1 = 1, TreeType.StateV2 = 3)
-            // Just like in our verification script
-            const outputStateTree = stateTrees.find(t => t.treeType === 3 || t.treeType === 1);
+            // Select a V1 tree by treeType (treeType: 1 = StateV1)
+            // NOTE: The tree address name (smt1, smt2, etc) is just a hash, not the tree version!
+            // IMPORTANT: Only V1 trees are compatible with our unshield flow - do NOT fallback to V2
+            const outputStateTree = stateTrees.find(t => t.treeType === 1);
 
             if (!outputStateTree) {
-                throw new Error("No valid State Tree found (Types 1 or 3).");
+                // Fail explicitly rather than use incompatible V2 tree
+                console.error("No V1 state tree available - cannot shield funds safely");
+                return Response.json({
+                    error: "No compatible state trees available for shielding. Please try again later."
+                }, { status: 503, headers: ACTIONS_CORS_HEADERS });
             }
+
+            console.log(`[Donate] Using state tree: ${outputStateTree.tree.toBase58()}, type: ${outputStateTree.treeType}`);
 
             // Generate compress instruction
             const ix = await LightSystemProgram.compress({
