@@ -157,6 +157,11 @@ export default function Dashboard() {
     const [shieldedBalance, setShieldedBalance] = useState<number>(0);
     const [loading, setLoading] = useState(false);
     const [unshieldLoading, setUnshieldLoading] = useState(false);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // New: Destination address for unshielding
     const [destinationAddress, setDestinationAddress] = useState<string>("");
@@ -631,7 +636,7 @@ export default function Dashboard() {
                         <Link href="/register">
                             <Button variant="ghost" size="sm">Register Handle</Button>
                         </Link>
-                        <WalletMultiButton />
+                        {mounted && <WalletMultiButton />}
                     </div>
                 </header>
 
@@ -663,7 +668,7 @@ export default function Dashboard() {
                                         <h2 className="text-3xl font-bold mb-2">Privacy for your SOL Donations</h2>
                                         <p className="text-gray-400">Connect your wallet to manage your shielded funds.</p>
                                     </div>
-                                    <WalletMultiButton />
+                                    {mounted && <WalletMultiButton />}
                                 </CardContent>
                             </Card>
                         </div>

@@ -3,7 +3,7 @@
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } from "@solana/web3.js";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -26,6 +26,11 @@ export default function Register() {
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [txSignature, setTxSignature] = useState<string | null>(null);
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
 
     // Validate handle input
     const validateHandle = (input: string): string | null => {
@@ -199,7 +204,7 @@ export default function Register() {
                                             Connect your Solana wallet to register a .stealth handle.
                                         </p>
                                     </div>
-                                    <WalletMultiButton />
+                                    {mounted && <WalletMultiButton />}
                                 </CardContent>
                             </Card>
                         </div>
