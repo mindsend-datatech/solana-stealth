@@ -8,7 +8,7 @@ describe("stealth-registry", () => {
 
   // const program = anchor.workspace.stealthRegistry as Program<StealthRegistry>;
   // Manual program ID check for devnet verification
-  const programId = new anchor.web3.PublicKey("3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2");
+  const programId = new anchor.web3.PublicKey("DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13");
 
   it("Is initialized!", async () => {
     // Add your test here.

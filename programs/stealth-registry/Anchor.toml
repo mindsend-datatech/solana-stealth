@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-stealth_registry = "3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2"
+stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
 
 [programs.devnet]
-stealth_registry = "3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2"
+stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
 
 [registry]
 url = "https://api.apr.dev"

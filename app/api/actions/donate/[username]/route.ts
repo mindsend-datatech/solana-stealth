@@ -127,7 +127,7 @@ export async function POST(
             // --- Custom Registry Resolution (.stealth) ---
             try {
                 const handle = username.slice(0, -8); // remove .stealth
-                const PROGRAM_ID = new PublicKey("3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2");
+                const PROGRAM_ID = new PublicKey("DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13");
 
                 // Derive PDA: [b"stealth", handle.as_bytes()]
                 const [pda] = PublicKey.findProgramAddressSync(
