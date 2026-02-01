@@ -144,18 +144,30 @@ export async function POST(
                     throw new Error(`Handle ${username} not registered.`);
                 }
 
-                // Deserialization (Manual to avoid heavy Anchor deps if possible, or use Program)
-                // Layout: [8 byte discriminator] + [4 byte len] + [handle bytes] + [32 byte pubkey] + [1 byte bump]
-                // We know authority is at offset 8 + 4 + handle.length.
-                // Let's rely on the layout structure defined in the IDL/Manual check
+                // Deserialization (Manual)
+                // Layout: [8 byte disc] + [4 byte len] + [handle bytes] + [32 byte authority] + [32 byte destination] + [1 byte bump]
 
-                // Rust String serialization: 4 bytes len + bytes
                 const handleLen = accountInfo.data.readUInt32LE(8);
                 const authorityOffset = 8 + 4 + handleLen;
-                const authorityBytes = accountInfo.data.subarray(authorityOffset, authorityOffset + 32);
-                recipientPubkey = new PublicKey(authorityBytes);
+                const destinationOffset = authorityOffset + 32;
 
-                console.log(`Resolved ${username} -> ${recipientPubkey.toBase58()}`);
+                // Ensure data is long enough
+                if (accountInfo.data.length < destinationOffset + 32) {
+                    // Fallback for legacy accounts (if any) or error
+                    // Since we just updated the program, old accounts might not have this field.
+                    // But for this "fix", we assume we are using the new program logic.
+                    // If missing, fallback to authority? No, better to fail fast or default to authority if we want backward compat.
+                    // Let's fallback to authority to prevent breakage of old accounts if possible, 
+                    // though realistically we should migrate them or expect new registrations.
+                    console.warn(`[Stealth Registry] Account too short for separate destination key, falling back to authority.`);
+                    const authorityBytes = accountInfo.data.subarray(authorityOffset, authorityOffset + 32);
+                    recipientPubkey = new PublicKey(authorityBytes);
+                } else {
+                    const destinationBytes = accountInfo.data.subarray(destinationOffset, destinationOffset + 32);
+                    recipientPubkey = new PublicKey(destinationBytes);
+                }
+
+                console.log(`Resolved ${username} -> ${recipientPubkey.toBase58()} (from Stealth Registry)`);
 
             } catch (_e) {
                 console.error(`Failed to resolve .stealth domain ${username}:`, _e);
