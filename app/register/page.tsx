@@ -2,7 +2,7 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { PublicKey, Transaction, TransactionInstruction, SystemProgram } from "@solana/web3.js";
+import { PublicKey, Transaction, TransactionInstruction, SystemProgram, Keypair } from "@solana/web3.js";
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ const REGISTER_DISCRIMINATOR = Buffer.from([211, 124, 67, 15, 211, 194, 178, 240
 
 export default function Register() {
     const { connection } = useConnection();
-    const { publicKey, connected, signTransaction } = useWallet();
+    const { publicKey, connected, signTransaction, signMessage } = useWallet();
     const [handle, setHandle] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -52,6 +52,24 @@ export default function Register() {
         setSuccess(null);
 
         try {
+            // 1. Derive Stealth Identity (Deterministic Keypair)
+            // This ensures the receiving address is different from the main wallet ("privacy on contract side")
+            // but is deterministically recoverable by the user signing the same message.
+            if (!signMessage) {
+                setError("Wallet does not support message signing");
+                return;
+            }
+
+            const messageText = `Sign this message to generate your Stealth Identity for ${handle}.stealth`;
+            const message = new TextEncoder().encode(messageText);
+            const signature = await signMessage(message);
+
+            // Hash signature to get 32-byte seed
+            const hashBuffer = await crypto.subtle.digest("SHA-256", signature as any);
+            const seed = new Uint8Array(hashBuffer);
+            const stealthKeypair = Keypair.fromSeed(seed);
+            const destinationKey = stealthKeypair.publicKey;
+
             // Derive PDA for the registry entry
             const [registryPda, bump] = PublicKey.findProgramAddressSync(
                 [Buffer.from("stealth"), Buffer.from(handle)],
@@ -67,19 +85,23 @@ export default function Register() {
             }
 
             // Build the instruction data
-            // Format: [8 bytes discriminator] + [4 bytes string length] + [handle bytes]
+            // Format: [8 bytes discriminator] + [4 bytes string length] + [handle bytes] + [32 bytes destination key]
             const handleBytes = Buffer.from(handle);
+            const destinationBytes = destinationKey.toBuffer();
+
             const instructionData = Buffer.concat([
                 REGISTER_DISCRIMINATOR,
                 Buffer.from(new Uint32Array([handleBytes.length]).buffer),
                 handleBytes,
+                destinationBytes
             ]);
 
             // Create the register instruction
             const registerInstruction = new TransactionInstruction({
                 programId: STEALTH_REGISTRY_PROGRAM_ID,
                 keys: [
-                    { pubkey: publicKey, isSigner: true, isWritable: true },      // authority
+                    { pubkey: publicKey, isSigner: true, isWritable: true },      // payer (Main Wallet)
+                    { pubkey: destinationKey, isSigner: true, isWritable: true }, // authority (Stealth Identity)
                     { pubkey: registryPda, isSigner: false, isWritable: true },   // registry_entry PDA
                     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
                 ],
@@ -92,13 +114,18 @@ export default function Register() {
             const { blockhash } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
 
+            // 1. Sign with the Stealth Identity (Authority)
+            transaction.partialSign(stealthKeypair);
+
+            // 2. Sign with the Main Wallet (Payer)
             const signed = await signTransaction(transaction);
-            const signature = await connection.sendRawTransaction(signed.serialize());
 
-            await connection.confirmTransaction(signature);
+            // 3. Send
+            const txSig = await connection.sendRawTransaction(signed.serialize());
+            await connection.confirmTransaction(txSig);
 
-            setTxSignature(signature);
-            setSuccess(`Successfully registered ${handle}.stealth!`);
+            setTxSignature(txSig);
+            setSuccess(`Successfully registered ${handle}.stealth! Private Identity: ${destinationKey.toBase58().slice(0, 6)}...`);
             setHandle(""); // Clear input
 
         } catch (e: any) {
@@ -117,7 +144,7 @@ export default function Register() {
         } finally {
             setLoading(false);
         }
-    }, [publicKey, signTransaction, connection, handle]);
+    }, [publicKey, signTransaction, signMessage, connection, handle]);
 
     const inputValidation = handle ? validateHandle(handle) : null;
     const isValidInput = handle.length > 0 && !inputValidation;
