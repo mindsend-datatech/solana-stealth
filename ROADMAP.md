@@ -7,7 +7,8 @@ This document outlines the development path for **Solana Stealth**, a privacy-fi
 The MVP goal is a "complete loop" where a user can register a handle, receive anonymous donations on X (Twitter), and withdraw funds.
 
 ### 1. Robust Registry & Identity
-- [ ] **Deploy Registry to Mainnet**: Deploy the `stealth-registry` Anchor program to Solana Mainnet. (Currently deployed on Devnet at `Y44tb2AA1JhtEyh7th7EUQQLt6qfC4dd7bdkHnUzfGC`)
+- [x] **Deploy Registry to Devnet**: Deployed the `stealth-registry` Anchor program to Solana Devnet at `3yLhEZ1di979tt2SrHsPMwvScYD89rGXmMryRhZwtAM2`.
+- [ ] **Deploy Registry to Mainnet**: Deploy the `stealth-registry` Anchor program to Solana Mainnet.
 - [x] **Registration UI**: Built `/register` page where users can connect their wallet and mint a `.stealth` handle by calling the `register` instruction.
 - [x] **Handle Resolution**: `route.ts` correctly resolves `.stealth` handles to wallet addresses via PDA lookup.
 
