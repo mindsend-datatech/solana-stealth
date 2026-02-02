@@ -25,7 +25,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       const tx = await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -46,7 +46,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -63,7 +63,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -84,7 +84,7 @@ describe("stealth-registry", () => {
         const [registryPDA] = await getRegistryPDA(handle);
 
         await program.methods
-          .register(handle)
+          .register(handle, provider.wallet.publicKey)
           .accounts({
             authority: provider.wallet.publicKey,
             registryEntry: registryPDA,
@@ -110,7 +110,7 @@ describe("stealth-registry", () => {
 
       try {
         await program.methods
-          .register(handle)
+          .register(handle, provider.wallet.publicKey)
           .accounts({
             authority: provider.wallet.publicKey,
             registryEntry: registryPDA,
@@ -139,7 +139,7 @@ describe("stealth-registry", () => {
 
         try {
           await program.methods
-            .register(handle)
+            .register(handle, provider.wallet.publicKey)
             .accounts({
               authority: provider.wallet.publicKey,
               registryEntry: registryPDA,
@@ -161,7 +161,7 @@ describe("stealth-registry", () => {
 
       // First registration should succeed
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -172,7 +172,7 @@ describe("stealth-registry", () => {
       // Second registration should fail (account already exists)
       try {
         await program.methods
-          .register(handle)
+          .register(handle, provider.wallet.publicKey)
           .accounts({
             authority: provider.wallet.publicKey,
             registryEntry: registryPDA,
@@ -194,7 +194,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -212,7 +212,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -229,7 +229,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -246,7 +246,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -263,7 +263,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -280,7 +280,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -297,7 +297,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -318,7 +318,7 @@ describe("stealth-registry", () => {
 
       // Register lowercase
       await program.methods
-        .register(handle1)
+        .register(handle1, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA1,
@@ -328,7 +328,7 @@ describe("stealth-registry", () => {
 
       // Register uppercase (should succeed - different PDA)
       await program.methods
-        .register(handle2)
+        .register(handle2, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA2,
@@ -370,7 +370,7 @@ describe("stealth-registry", () => {
       const [registryPDA, expectedBump] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -387,7 +387,7 @@ describe("stealth-registry", () => {
       const [registryPDA] = await getRegistryPDA(handle);
 
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -431,7 +431,7 @@ describe("stealth-registry", () => {
 
       // First, register the handle
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -465,7 +465,7 @@ describe("stealth-registry", () => {
 
       // Register handle with provider wallet
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -513,7 +513,7 @@ describe("stealth-registry", () => {
 
       // Register handle
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -555,7 +555,7 @@ describe("stealth-registry", () => {
 
       // Register handle
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -595,7 +595,7 @@ describe("stealth-registry", () => {
 
       // Register handle
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -628,7 +628,7 @@ describe("stealth-registry", () => {
         pdas.push(registryPDA);
 
         await program.methods
-          .register(handle)
+          .register(handle, provider.wallet.publicKey)
           .accounts({
             authority: provider.wallet.publicKey,
             registryEntry: registryPDA,
@@ -663,7 +663,7 @@ describe("stealth-registry", () => {
 
       // Provider registers
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,
@@ -730,7 +730,7 @@ describe("stealth-registry", () => {
 
       // Register
       await program.methods
-        .register(handle)
+        .register(handle, provider.wallet.publicKey)
         .accounts({
           authority: provider.wallet.publicKey,
           registryEntry: registryPDA,

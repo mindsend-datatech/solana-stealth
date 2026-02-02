@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13");
+declare_id!("4oqVzhMotF9vUJoaZ8YwuJpGndwYxReMRDjQj7j1Fbk8");
 
 /// The maximum length of a stealth handle (e.g., "ariel")
 const MAX_HANDLE_LEN: usize = 32;

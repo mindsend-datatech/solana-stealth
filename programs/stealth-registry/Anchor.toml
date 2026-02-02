@@ -5,17 +5,17 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
-
 [programs.devnet]
 stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
+
+[programs.localnet]
+stealth_registry = "4oqVzhMotF9vUJoaZ8YwuJpGndwYxReMRDjQj7j1Fbk8"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
