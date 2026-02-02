@@ -1,6 +1,14 @@
 #!/bin/bash
 set -e
 
+# Source cargo environment if available (for CI compatibility)
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+
+export PATH="$HOME/.cargo/bin:$PATH"
+
+echo "Using rustc: $(which rustc) - $(rustc --version)"
+echo "Using cargo: $(which cargo)"
+
 # Store original program ID
 ORIGINAL_ID=$(grep -oP 'declare_id!\("\K[^"]+' programs/stealth-registry/src/lib.rs)
 
