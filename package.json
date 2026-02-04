@@ -16,6 +16,7 @@
     "@bonfida/spl-name-service": "^3.0.16",
     "@lightprotocol/compressed-token": "^0.22.0",
     "@lightprotocol/stateless.js": "^0.23.0-beta.3",
+    "@radix-ui/react-slot": "^1.2.4",
     "@solana/actions": "^1.6.6",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",

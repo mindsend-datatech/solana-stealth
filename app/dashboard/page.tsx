@@ -229,19 +229,31 @@ export default function Dashboard() {
             setRpcError(null);
             try {
                 const heliusRpc = process.env.NEXT_PUBLIC_HELIUS_RPC_URL;
-                if (!heliusRpc) return;
+                if (!heliusRpc) {
+                    setRpcError({
+                        type: 'unavailable',
+                        message: 'Helius RPC URL is not configured in environment variables.',
+                        retryable: false
+                    });
+                    setLoading(false);
+                    return;
+                }
 
                 const rpc = createRpc(heliusRpc, heliusRpc);
 
                 // Fetch for Main Wallet
+                console.log(`[Dashboard] Fetching shielded balance for main wallet: ${publicKey.toBase58()}`);
                 const mainCompressedBalance = await rpc.getCompressedBalanceByOwner(publicKey);
+                console.log(`[Dashboard] Main balance response:`, mainCompressedBalance);
                 let total = mainCompressedBalance.toNumber ? mainCompressedBalance.toNumber() : Number(mainCompressedBalance);
 
                 // Fetch for Stealth Identity (if derived)
                 if (stealthLinkKey) {
                     try {
                         const stealthPk = new PublicKey(stealthLinkKey);
+                        console.log(`[Dashboard] Fetching shielded balance for stealth identity: ${stealthPk.toBase58()}`);
                         const stealthCompressedBalance = await rpc.getCompressedBalanceByOwner(stealthPk);
+                        console.log(`[Dashboard] Stealth balance response:`, stealthCompressedBalance);
                         total += stealthCompressedBalance.toNumber ? stealthCompressedBalance.toNumber() : Number(stealthCompressedBalance);
                     } catch (e) {
                         console.warn("Failed to fetch stealth identity balance:", e);
@@ -249,6 +261,7 @@ export default function Dashboard() {
                 }
 
                 setShieldedBalance(total / LAMPORTS_PER_SOL);
+                console.log(`[Dashboard] Total shielded balance: ${total / LAMPORTS_PER_SOL} SOL`);
                 setLastFetchTime(new Date());
             } catch (e) {
                 console.error("Failed to fetch shielded balance:", e);
@@ -312,10 +325,19 @@ export default function Dashboard() {
                         if (data.length < authOffset + 32) return false;
 
                         const authority = new PublicKey(data.subarray(authOffset, authOffset + 32));
-                        const isMainWallet = authority.equals(publicKey);
-                        const isStealthIdentity = stealthLinkKey && authority.toBase58() === stealthLinkKey;
+                        const isMainWalletAuth = authority.equals(publicKey);
+                        const isStealthIdentityAuth = stealthLinkKey && authority.toBase58() === stealthLinkKey;
 
-                        return isMainWallet || isStealthIdentity;
+                        if (isMainWalletAuth || isStealthIdentityAuth) return true;
+
+                        // Check destination_pubkey (New Structure)
+                        const destOffset = authOffset + 32;
+                        if (data.length >= destOffset + 32) {
+                            const destination = new PublicKey(data.subarray(destOffset, destOffset + 32));
+                            return destination.equals(publicKey);
+                        }
+
+                        return false;
                     } catch {
                         return false;
                     }
@@ -364,16 +386,28 @@ export default function Dashboard() {
 
             const rpc = createRpc(heliusRpc, heliusRpc);
 
-            // 1. Fetch UTXOs (Shielded Accounts) for Main Wallet
+            // 1. Fetch UTXOs (Shielded Accounts) from all potential owners
             console.log("[Unshield] Step 1: Fetching compressed accounts...");
-            const mainAccounts = await rpc.getCompressedAccountsByOwner(publicKey);
 
-            if (mainAccounts.items.length === 0) {
-                alert("No shielded funds found to unshield in your wallet.");
+            const fetchPromises = [rpc.getCompressedAccountsByOwner(publicKey)];
+            if (stealthLinkKey) {
+                try {
+                    console.log(`[Unshield] Also fetching accounts for stealth identity: ${stealthLinkKey}`);
+                    fetchPromises.push(rpc.getCompressedAccountsByOwner(new PublicKey(stealthLinkKey)));
+                } catch (e) {
+                    console.warn("[Unshield] Failed to prepare stealth identity fetch:", e);
+                }
+            }
+
+            const results = await Promise.all(fetchPromises);
+            const allItems = results.flatMap(res => res.items);
+
+            if (allItems.length === 0) {
+                alert("No shielded funds found to unshield.");
+                setUnshieldLoading(false);
                 return;
             }
 
-            const allItems = mainAccounts.items;
             console.log(`[Unshield] Found ${allItems.length} total shielded accounts.`);
 
             // Filter by actual treeType if needed, not by address.
@@ -529,9 +563,20 @@ export default function Dashboard() {
 
             let signed;
             try {
-                // signTransaction should handle VersionedTransaction
+                // If any accounts are owned by the stealth identity, we must sign with the stealth keypair
+                const needsStealthSig = validAccounts.some(acc => {
+                    const ownerStr = acc.owner?.toBase58 ? acc.owner.toBase58() : acc.owner;
+                    return ownerStr === stealthLinkKey;
+                });
+
+                if (needsStealthSig && stealthKeypair) {
+                    console.log("[Unshield] Pre-signing with stealth identity keypair...");
+                    versionedTx.sign([stealthKeypair]);
+                }
+
+                // signTransaction should handle VersionedTransaction and preserve existing signatures
                 signed = await signTransaction(versionedTx as any);
-                console.log("[Unshield] Transaction signed successfully");
+                console.log("[Unshield] Transaction signed successfully by wallet");
             } catch (signError: any) {
                 console.error("[Unshield] Signing failed:", signError);
                 throw new Error(`Wallet signing failed: ${signError.message || signError}`);

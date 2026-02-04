@@ -228,7 +228,7 @@ export default function Home() {
               Built for the Solana Privacy Hackathon
             </p>
             <div className="flex items-center gap-6">
-              <a href="https://github.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-purple-400 transition-colors text-sm">
+              <a href="https://github.com/mindsend-datatech/solana-stealth" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-purple-400 transition-colors text-sm">
                 GitHub
               </a>
               <a href="https://lightprotocol.com" target="_blank" rel="noopener noreferrer" className="text-gray-500 hover:text-purple-400 transition-colors text-sm">
