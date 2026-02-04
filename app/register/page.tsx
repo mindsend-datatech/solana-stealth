@@ -242,9 +242,10 @@ export default function Register() {
             }
 
             const keys = [
-                { pubkey: authorityKey, isSigner: true, isWritable: true },
-                { pubkey: pdaKey, isSigner: false, isWritable: true },
-                { pubkey: systemKey, isSigner: false, isWritable: false },
+                { pubkey: authorityKey, isSigner: true, isWritable: true }, // payer
+                { pubkey: authorityKey, isSigner: true, isWritable: false }, // authority
+                { pubkey: pdaKey, isSigner: false, isWritable: true }, // registry_entry
+                { pubkey: systemKey, isSigner: false, isWritable: false }, // system_program
             ];
 
             console.log("[Register v5 Debug] Final Keys JSON:", JSON.stringify(keys.map(k => ({
@@ -290,7 +291,18 @@ export default function Register() {
         } catch (e: any) {
             console.error("Registration error:", e);
             setTxStatus('error');
-            setError(`Error: ${e.message || "Registration failed"}.`);
+
+            let errorMessage = e.message || "Registration failed";
+            if (e.logs && Array.isArray(e.logs)) {
+                errorMessage += ` Logs: ${e.logs.join(", ")}`;
+            } else if (typeof e === "object" && e !== null) {
+                // Try to catch common Solana JSON error structures if message isn't enough
+                try {
+                    errorMessage = JSON.stringify(e, null, 2);
+                } catch { }
+            }
+
+            setError(errorMessage);
         }
     }, [connection, handle, stealthKeypair, publicKey, signTransaction]);
 
@@ -394,24 +406,32 @@ export default function Register() {
                                     )}
 
                                     {(txStatus === 'sending' || txStatus === 'confirming' || txStatus === 'success') && (
-                                        <div className={`p-4 rounded-lg border space-y-2 ${txStatus === 'success'
-                                            ? "bg-green-500/5 border-green-500/20"
-                                            : "bg-yellow-500/5 border-yellow-500/20 animate-pulse"
+                                        <div className={`p-4 rounded-lg border space-y-3 transition-all duration-300 ${txStatus === 'success'
+                                                ? "bg-green-500/10 border-green-500/30"
+                                                : "bg-yellow-500/10 border-yellow-500/30 animate-pulse"
                                             }`}>
                                             <div className="flex items-center justify-between">
-                                                <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-xs uppercase`}>Target Network</span>
+                                                <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-[10px] uppercase tracking-wider`}>Target Network</span>
                                                 <span className="text-gray-400 font-mono text-xs">Solana Devnet</span>
                                             </div>
-                                            <div className="flex items-center justify-between">
-                                                <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-xs uppercase`}>Status</span>
-                                                <span className="text-white font-mono text-xs font-bold capitalize">
-                                                    {txStatus === 'success' ? 'Confirmed' : `${txStatus} Transaction...`}
-                                                </span>
+                                            <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                                                <div className="flex flex-col">
+                                                    <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-[10px] uppercase tracking-wider mb-1`}>Status</span>
+                                                    <span className="text-white font-mono text-xs font-bold capitalize flex items-center gap-2">
+                                                        {txStatus === 'success' ? <Check className="w-3 h-3 text-green-400" /> : <Loader2 className="w-3 h-3 animate-spin" />}
+                                                        {txStatus === 'success' ? 'Confirmed on-chain' : `${txStatus} Transaction...`}
+                                                    </span>
+                                                </div>
                                             </div>
                                             {txSignature && (
                                                 <div className="pt-2 border-t border-white/5">
-                                                    <a href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-cyan-400 hover:underline font-mono">
-                                                        {txStatus === 'success' ? 'View Transaction' : 'View Pending Tx'} <ExternalLink className="w-3 h-3" />
+                                                    <a
+                                                        href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className={`flex items-center gap-1 text-[10px] hover:underline font-mono ${txStatus === 'success' ? "text-green-400" : "text-cyan-400"}`}
+                                                    >
+                                                        {txStatus === 'success' ? 'View Confirmed Transaction' : 'View Pending on Explorer'} <ExternalLink className="w-3 h-3" />
                                                     </a>
                                                 </div>
                                             )}
