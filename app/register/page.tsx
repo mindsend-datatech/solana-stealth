@@ -389,20 +389,25 @@ export default function Register() {
                                         </Button>
                                     )}
 
-                                    {(txStatus === 'sending' || txStatus === 'confirming') && (
-                                        <div className="p-4 rounded-lg bg-yellow-500/5 border border-yellow-500/20 space-y-2 animate-pulse">
+                                    {(txStatus === 'sending' || txStatus === 'confirming' || txStatus === 'success') && (
+                                        <div className={`p-4 rounded-lg border space-y-2 ${txStatus === 'success'
+                                                ? "bg-green-500/5 border-green-500/20"
+                                                : "bg-yellow-500/5 border-yellow-500/20 animate-pulse"
+                                            }`}>
                                             <div className="flex items-center justify-between">
-                                                <span className="text-yellow-400 font-mono text-xs uppercase">Target Network</span>
+                                                <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-xs uppercase`}>Target Network</span>
                                                 <span className="text-gray-400 font-mono text-xs">Solana Devnet</span>
                                             </div>
                                             <div className="flex items-center justify-between">
-                                                <span className="text-yellow-400 font-mono text-xs uppercase">Status</span>
-                                                <span className="text-white font-mono text-xs font-bold capitalize">{txStatus} Transaction...</span>
+                                                <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-xs uppercase`}>Status</span>
+                                                <span className="text-white font-mono text-xs font-bold capitalize">
+                                                    {txStatus === 'success' ? 'Confirmed' : `${txStatus} Transaction...`}
+                                                </span>
                                             </div>
                                             {txSignature && (
                                                 <div className="pt-2 border-t border-white/5">
                                                     <a href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-cyan-400 hover:underline font-mono">
-                                                        View Pending Tx <ExternalLink className="w-3 h-3" />
+                                                        {txStatus === 'success' ? 'View Transaction' : 'View Pending Tx'} <ExternalLink className="w-3 h-3" />
                                                     </a>
                                                 </div>
                                             )}
