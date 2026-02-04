@@ -11,6 +11,8 @@ import {
     PublicKey,
     Transaction,
     LAMPORTS_PER_SOL,
+    VersionedTransaction,
+    TransactionMessage,
 } from "@solana/web3.js";
 import { LightSystemProgram, createRpc } from "@lightprotocol/stateless.js";
 import BN from "bn.js";
@@ -97,7 +99,8 @@ export async function POST(
         }
 
         const account = new PublicKey(body.account);
-        const amountLamports = new BN(amountSOL * LAMPORTS_PER_SOL);
+        const amountLamports = new BN(Math.round(amountSOL * LAMPORTS_PER_SOL));
+        console.log(`[Donate] amountSOL: ${amountSOL}, amountLamports: ${amountLamports.toString()}`);
 
         // Resolve Recipient
         // Logic: Checks if 'username' ends with .sol -> Resolve via SNS. Else -> Treat as PubKey.
@@ -126,7 +129,7 @@ export async function POST(
         } else if (username.toLowerCase().endsWith(".stealth")) {
             // --- Custom Registry Resolution (.stealth) ---
             try {
-                const handle = username.slice(0, -8); // remove .stealth
+                const handle = username.slice(0, -8).toLowerCase(); // remove .stealth and normalize
                 const PROGRAM_ID = new PublicKey("DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13");
 
                 // Derive PDA: [b"stealth", handle.as_bytes()]
@@ -139,8 +142,10 @@ export async function POST(
                 // Use a standard connection for fetching account info
                 const connection = new Connection(rpcUrl || "https://api.devnet.solana.com", "confirmed");
 
+                console.log(`[Stealth Resolution] Handle: ${handle}, PDA: ${pda.toBase58()}`);
                 const accountInfo = await connection.getAccountInfo(pda);
                 if (!accountInfo) {
+                    console.error(`[Stealth Resolution] PDA not found: ${pda.toBase58()}`);
                     throw new Error(`Handle ${username} not registered.`);
                 }
 
@@ -150,6 +155,8 @@ export async function POST(
                 const handleLen = accountInfo.data.readUInt32LE(8);
                 const authorityOffset = 8 + 4 + handleLen;
                 const destinationOffset = authorityOffset + 32;
+
+                console.log(`[Stealth Resolution] Account Data Length: ${accountInfo.data.length}, handleLen: ${handleLen}, authOffset: ${authorityOffset}, destOffset: ${destinationOffset}`);
 
                 // Ensure data is long enough
                 if (accountInfo.data.length < destinationOffset + 32) {
@@ -190,9 +197,9 @@ export async function POST(
         }
 
         const connection = new Connection(rpcUrl, "confirmed");
-        const transaction = new Transaction();
 
         // --- Light Protocol Shielding ---
+        let ix: any;
         try {
             const rpc = createRpc(rpcUrl, rpcUrl);
             const stateTrees = await rpc.getStateTreeInfos();
@@ -223,23 +230,27 @@ export async function POST(
             console.log(`[Donate] Using state tree: ${outputStateTree.tree.toBase58()}, type: ${outputStateTree.treeType}`);
 
             // Generate compress instruction
-            const ix = await LightSystemProgram.compress({
+            ix = await LightSystemProgram.compress({
                 payer: account,
                 toAddress: recipientPubkey,
                 lamports: amountLamports, // BN
                 outputStateTreeInfo: outputStateTree,
             });
 
-            transaction.add(ix);
 
         } catch (e) {
             console.error("Light Protocol Error:", e);
             return Response.json({ error: "Failed to generate shielding transaction. Ensure RPC supports ZK compression." }, { status: 500, headers: ACTIONS_CORS_HEADERS });
         }
 
-        transaction.feePayer = account;
-        const blockhash = await connection.getLatestBlockhash();
-        transaction.recentBlockhash = blockhash.blockhash;
+        const { blockhash } = await connection.getLatestBlockhash();
+        const messageV0 = new TransactionMessage({
+            payerKey: account,
+            recentBlockhash: blockhash,
+            instructions: [ix],
+        }).compileToV0Message();
+
+        const transaction = new VersionedTransaction(messageV0);
 
         const payload: ActionPostResponse = await createPostResponse({
             fields: {

@@ -58,7 +58,11 @@ export default function Register() {
     const { connection } = useConnection();
     const { publicKey, connected, signTransaction, signMessage } = useWallet();
     const [handle, setHandle] = useState("");
-    const [loading, setLoading] = useState(false);
+    // Transaction Status State
+    type TxStatus = 'idle' | 'signing' | 'sending' | 'confirming' | 'success' | 'error';
+    const [txStatus, setTxStatus] = useState<TxStatus>('idle');
+
+    // UI State
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [txSignature, setTxSignature] = useState<string | null>(null);
@@ -114,6 +118,7 @@ export default function Register() {
         setStealthBalance(0);
         setError(null);
         setSuccess(null);
+        setTxStatus('idle');
     }, [handle]);
 
     // Validate handle input
@@ -193,7 +198,7 @@ export default function Register() {
             return;
         }
 
-        setLoading(true);
+        setTxStatus('signing');
         setError(null);
         setSuccess(null);
 
@@ -253,7 +258,7 @@ export default function Register() {
             // 5. Build Transaction
             const transaction = new Transaction().add(registerInstruction);
             transaction.feePayer = publicKey;
-            const { blockhash } = await connection.getLatestBlockhash();
+            const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
 
             // 6. Signature Flow
@@ -262,6 +267,7 @@ export default function Register() {
             console.log("[Register] Requesting signature from main wallet...");
             const signedTransaction = await signTransaction(transaction);
 
+            setTxStatus('sending');
             console.log("[Register] Sending transaction...");
             const txSig = await connection.sendRawTransaction(signedTransaction.serialize(), {
                 skipPreflight: true,
@@ -270,13 +276,17 @@ export default function Register() {
 
             console.log(`[Register] Broadcasted! Signature: ${txSig}`);
             setTxSignature(txSig);
-            setSuccess(`Successfully broadcasted! Registration for ${handle}.stealth is pending.`);
+
+            setTxStatus('confirming');
+            await connection.confirmTransaction({ signature: txSig, blockhash, lastValidBlockHeight }, "confirmed");
+
+            setTxStatus('success');
+            setSuccess(`Successfully registered ${handle}.stealth!`);
             setHandle("");
         } catch (e: any) {
             console.error("Registration error:", e);
+            setTxStatus('error');
             setError(`Error: ${e.message || "Registration failed"}.`);
-        } finally {
-            setLoading(false);
         }
     }, [connection, handle, stealthKeypair, publicKey, signTransaction]);
 
@@ -296,7 +306,7 @@ export default function Register() {
     };
 
     const isHandleValid = !validateHandle(handle);
-    const isActionDisabled = !isHandleValid || loading || fundingLoading;
+    const isActionDisabled = !isHandleValid || txStatus !== 'idle' && txStatus !== 'error' || fundingLoading;
 
     return (
         <div className="min-h-screen bg-black text-white relative overflow-hidden">
@@ -355,25 +365,48 @@ export default function Register() {
                                             value={handle}
                                             onChange={(e) => setHandle(e.target.value.toLowerCase())}
                                             className="font-mono text-xl bg-white/5 border-white/10 focus:border-purple-500/50 pr-24 h-16"
-                                            disabled={loading}
+                                            disabled={txStatus !== 'idle' && txStatus !== 'error'}
                                         />
                                         <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-mono text-lg pointer-events-none">
                                             .stealth
                                         </div>
                                     </div>
 
-                                    {!success && (
+                                    {!success && txStatus !== 'success' && (
                                         <Button
                                             onClick={() => handleUnifiedAction()}
                                             disabled={isActionDisabled}
                                             className="w-full h-16 bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 font-bold text-lg shadow-lg shadow-purple-500/20"
                                         >
-                                            {loading ? (
-                                                <Loader2 className="w-6 h-6 animate-spin" />
-                                            ) : (
+                                            {txStatus === 'idle' || txStatus === 'error' ? (
                                                 <>Register .stealth</>
+                                            ) : (
+                                                <div className="flex items-center gap-2">
+                                                    <Loader2 className="w-6 h-6 animate-spin" />
+                                                    <span className="capitalize">{txStatus}...</span>
+                                                </div>
                                             )}
                                         </Button>
+                                    )}
+
+                                    {(txStatus === 'sending' || txStatus === 'confirming') && (
+                                        <div className="p-4 rounded-lg bg-yellow-500/5 border border-yellow-500/20 space-y-2 animate-pulse">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-yellow-400 font-mono text-xs uppercase">Target Network</span>
+                                                <span className="text-gray-400 font-mono text-xs">Solana Devnet</span>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-yellow-400 font-mono text-xs uppercase">Status</span>
+                                                <span className="text-white font-mono text-xs font-bold capitalize">{txStatus} Transaction...</span>
+                                            </div>
+                                            {txSignature && (
+                                                <div className="pt-2 border-t border-white/5">
+                                                    <a href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] text-cyan-400 hover:underline font-mono">
+                                                        View Pending Tx <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                </div>
+                                            )}
+                                        </div>
                                     )}
 
                                     {/* {stealthKeypair && !success && (

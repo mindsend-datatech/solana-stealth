@@ -9,7 +9,7 @@ skip-lint = false
 stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
 
 [programs.devnet]
-stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
+stealth_registry = "DbGF1"
 
 [registry]
 url = "https://api.apr.dev"

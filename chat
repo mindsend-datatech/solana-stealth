@@ -1,0 +1,80 @@
+Cat | Solana Foundation, [14 Jan 2026 at 12:34:18]:
+...Chat directly to the team here!
+
+
+Jorrit - Light Protocol, [14 Jan 2026 at 14:14:54 (15 Jan 2026 at 00:19:22)]:
+This is Zk id example I presented in the workshop
+https://github.com/Lightprotocol/program-examples/tree/main/zk/zk-id
+
+The zk id example uses Light Protocol to:
+
+1. Compressed Addresses to create cheap nullifiers
+2. store zk id credentials in existing Merkle trees indexed by Solana Rpcs
+- you can use cheap nullifiers without 2 and vice versa
+
+
+Cat | Solana Foundation, [14 Jan 2026 at 14:23:56]:
+can we create our own arbitrary merkle tree and do inclusion proofs?
+
+
+Jorrit - Light Protocol, [14 Jan 2026 at 15:27:02]:
+you can create new zk compression State Merkle trees but it doesn't yield an advantage over using initialized ones.
+
+For non zk compression sparse Merkle trees I would just create them directly in my program.
+
+This is a sparse Merkle tree library that works with Solana Poseidon syscalls https://docs.rs/light-sparse-merkle-tree
+
+
+/ 0xn ., [14 Jan 2026 at 15:41:42]:
+Hello, could you please confirm if this integration of Light Protocol is a  mandatory requirement to submit in the open track?
+
+
+Cat | Solana Foundation, [14 Jan 2026 at 15:50:50]:
+No, but $3k of the total $18k is only for people who build on Light Protocol
+
+
+onlyabrak, [14 Jan 2026 at 19:05:38]:
+i’m building on v2 trees. when do you guys plan to deploy on mainnet?
+
+Folarihn Top 🅱️oi, [19 Jan 2026 at 17:57:27]:
+Hi team 👋
+I’m building Cipher Pay, a private payment-link app on Solana.
+
+Right now I’m using client-side encrypted memos for coordination, but i want to move toward proper ZK-based privacy.
+
+I wanted to ask: Do you have a TypeScript SDK or any example repo that shows shielded transfers using ZK Compression?
+
+More specifically, I’m trying to create a shielded payment link where:
+
+👉the sender can fund the link privately, and
+
+👉the receiver can claim it privately, without linking identities on-chain.
+
+Any pointers to docs, examples, or recommended approaches would help a lot. Thanks 🙏
+
+
+Jorrit - Light Protocol, [21 Jan 2026 at 12:40:45]:
+Hey, light protocol doesn’t natively support shielded transfers. It is infrastructure that makes it easier to build zk protocols on Solana such as shielded transfers.
+
+You can use it to:
+1. store your nullifiers without paying for rent exemption
+2. Store utxo hashes in a Merkle tree without the need to run an indexer or create the Merkle tree accounts
+3. both 1 & 2 work independently or together
+
+
+Folarihn Top 🅱️oi, [21 Jan 2026 at 12:42:16]:
+Thank you sorted it and will make use of this information also 
+
+Appreciate the response.
+
+
+infraboi, [23 Jan 2026 at 14:14:51]:
+hey jorrit! is it okay if i private dm you!!
+
+
+Jorrit - Light Protocol, [23 Jan 2026 at 14:15:28]:
+Sure
+
+
+Francis, [23 Jan 2026 at 14:20:00]:
+hello, who is the point of contact for technical & developer questions about light protocol ?

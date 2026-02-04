@@ -1,0 +1,9 @@
+(undo-tree-save-format-version . 1)
+"a185503c30efd59e61d70c1861e88a7f416100b1"
+[nil nil nil nil (27007 57676 505025 0) 0 nil]
+([nil nil ((10381 . 10402) (t 27007 36118 906208 780000)) nil (27007 57676 505025 0) 0 nil])
+([nil nil ((10402 . 10408)) nil (27007 57676 505024 0) 0 nil])
+([nil nil ((#("-" 0 1 (font-lock-face web-mode-html-attr-value-face tag-type start tag-name "a" tag-attr t jsx-depth 1 part-side jsx ws-butler-chg chg fontified t)) . -10407) (undo-tree-id0 . -1) 10408) nil (27007 57676 505024 0) 0 nil])
+([nil nil ((10407 . 10408)) nil (27007 57676 505006 0) 0 nil])
+([nil current ((10408 . 10414)) nil (27007 57676 505002 0) 0 nil])
+nil
