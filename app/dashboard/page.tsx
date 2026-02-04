@@ -578,20 +578,23 @@ export default function Dashboard() {
                 return key;
             });
 
-            // Fix 2: Ensure Stealth Identity is a Signer
+            // Fix 2: Ensure Stealth Identity is in the keys AND is a Signer
             if (stealthKeypair) {
                 const stealthPubkeyStr = stealthKeypair.publicKey.toBase58();
-                // Check if the stealth key is in the accounts list
                 const stealthKeyIndex = instruction.keys.findIndex((k: any) => k.pubkey.toBase58() === stealthPubkeyStr);
 
                 if (stealthKeyIndex >= 0) {
-                    console.log(`[Unshield] Marking stealth key ${stealthPubkeyStr} as signer`);
+                    console.log(`[Unshield] Marking existing stealth key ${stealthPubkeyStr} as signer`);
                     instruction.keys[stealthKeyIndex].isSigner = true;
                 } else {
-                    // If it's NOT in the keys but we know we own the funds, we might need to ADD it?
-                    // Typically `decompress` should include the owner in the keys.
-                    // If it's missing, that's another issue.
-                    console.warn(`[Unshield] Stealth key ${stealthPubkeyStr} expecting to sign but not found in instruction keys!`);
+                    // CRITICAL FIX: If the owner key is missing (because it's not the payer), WE MUST ADD IT.
+                    // Web3.js will refuse to sign if the key is not in the transaction's account list.
+                    console.log(`[Unshield] Appending MISSING stealth key ${stealthPubkeyStr} as signer`);
+                    instruction.keys.push({
+                        pubkey: stealthKeypair.publicKey,
+                        isSigner: true,
+                        isWritable: true // It's owning the compressed account being spent, so conceptually writable
+                    });
                 }
             }
 
