@@ -75,11 +75,11 @@ export default function Register() {
     }, []);
 
     // Derive or refresh Stealth Identity
-    const deriveIdentity = async () => {
-        if (!publicKey || !signMessage || !handle) return;
+    const deriveIdentity = async (): Promise<Keypair | null> => {
+        if (!publicKey || !signMessage || !handle) return null;
         try {
             const validationError = validateHandle(handle);
-            if (validationError) return;
+            if (validationError) return null;
 
             const messageText = `Generate Stealth Link Identity`;
             const message = new TextEncoder().encode(messageText);
@@ -89,8 +89,10 @@ export default function Register() {
             const kp = Keypair.fromSeed(seed);
             setStealthKeypair(kp);
             refreshStealthBalance(kp.publicKey);
+            return kp;
         } catch (e: any) {
             setError(e.message || "Failed to derive identity");
+            return null;
         }
     };
 
@@ -184,77 +186,117 @@ export default function Register() {
         }
     };
 
-    const handleRegister = useCallback(async () => {
-        if (!stealthKeypair) {
-            setError("Please derive your identity first");
+    const handleRegister = useCallback(async (providedKp?: Keypair) => {
+        const activeKp = providedKp || stealthKeypair;
+        if (!publicKey || !activeKp || !handle) {
+            setError("Missing wallet or handle. Please try again.");
             return;
         }
 
         setLoading(true);
         setError(null);
+        setSuccess(null);
 
         try {
-            // Derive PDA for the registry entry
+            console.log("[Register] Starting registration for handle:", handle);
+
+            // 1. Correct seeds: b"stealth" + handle bytes
             const [registryPda] = PublicKey.findProgramAddressSync(
                 [Buffer.from("stealth"), Buffer.from(handle)],
                 STEALTH_REGISTRY_PROGRAM_ID
             );
+            console.log("[Register] Registry PDA:", registryPda.toBase58());
 
-            // Build instruction data
+            // 2. Build Borsh Data: Discriminator (8) + String (4 + N) + Pubkey (32)
             const handleBytes = Buffer.from(handle);
-            const destinationBytes = stealthKeypair.publicKey.toBuffer();
+            const handleLen = Buffer.alloc(4);
+            handleLen.writeUInt32LE(handleBytes.length, 0);
+
             const instructionData = Buffer.concat([
                 REGISTER_DISCRIMINATOR,
-                Buffer.from(new Uint32Array([handleBytes.length]).buffer),
+                handleLen,
                 handleBytes,
-                destinationBytes
+                activeKp.publicKey.toBuffer() // destination_pubkey = Stealth Identity
             ]);
 
-            // Create instruction - ONLY Stealth Identity signs
+            // Instruction: Register
+            // Program expects: [Authority/Payer, RegistryEntry, SystemProgram]
+            const authorityKey = new PublicKey(publicKey.toBase58());
+            const pdaKey = new PublicKey(registryPda.toBase58());
+            const systemKey = new PublicKey(SystemProgram.programId.toBase58());
+
+            console.log("[Register v5 Debug] Authority (Wallet):", authorityKey.toBase58());
+            console.log("[Register v5 Debug] PDA:", pdaKey.toBase58());
+
+            if (authorityKey.equals(pdaKey)) {
+                throw new Error("Critical Error: Wallet Address matches PDA. This should never happen.");
+            }
+
+            const keys = [
+                { pubkey: authorityKey, isSigner: true, isWritable: true },
+                { pubkey: pdaKey, isSigner: false, isWritable: true },
+                { pubkey: systemKey, isSigner: false, isWritable: false },
+            ];
+
+            console.log("[Register v5 Debug] Final Keys JSON:", JSON.stringify(keys.map(k => ({
+                pubkey: k.pubkey.toBase58(),
+                isSigner: k.isSigner,
+                isWritable: k.isWritable
+            }))));
+
             const registerInstruction = new TransactionInstruction({
                 programId: STEALTH_REGISTRY_PROGRAM_ID,
-                keys: [
-                    { pubkey: stealthKeypair.publicKey, isSigner: true, isWritable: true },
-                    { pubkey: registryPda, isSigner: false, isWritable: true },
-                    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-                ],
+                keys: keys,
                 data: instructionData,
             });
 
+            // 5. Build Transaction
             const transaction = new Transaction().add(registerInstruction);
-            transaction.feePayer = stealthKeypair.publicKey;
+            transaction.feePayer = publicKey;
             const { blockhash } = await connection.getLatestBlockhash();
             transaction.recentBlockhash = blockhash;
 
-            transaction.sign(stealthKeypair);
-            console.log("Sending registration transaction signed by Stealth Identity:", stealthKeypair.publicKey.toBase58());
+            // 6. Signature Flow
+            if (!signTransaction) throw new Error("Wallet does not support signing");
 
-            const txSig = await connection.sendRawTransaction(transaction.serialize(), {
-                skipPreflight: false,
-                preflightCommitment: "confirmed"
+            console.log("[Register] Requesting signature from main wallet...");
+            const signedTransaction = await signTransaction(transaction);
+
+            console.log("[Register] Sending transaction...");
+            const txSig = await connection.sendRawTransaction(signedTransaction.serialize(), {
+                skipPreflight: true,
+                preflightCommitment: "processed"
             });
-            console.log("Transaction sent. Signature:", txSig);
 
-            const confirmation = await connection.confirmTransaction({
-                signature: txSig,
-                blockhash: blockhash,
-                lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
-            }, "confirmed");
-
-            if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-            }
-
+            console.log(`[Register] Broadcasted! Signature: ${txSig}`);
             setTxSignature(txSig);
-            setSuccess(`Successfully registered ${handle}.stealth anonymously!`);
+            setSuccess(`Successfully broadcasted! Registration for ${handle}.stealth is pending.`);
             setHandle("");
         } catch (e: any) {
             console.error("Registration error:", e);
-            setError(e.message || "Registration failed. Ensure your Stealth Identity has ≈0.003 SOL.");
+            setError(`Error: ${e.message || "Registration failed"}.`);
         } finally {
             setLoading(false);
         }
-    }, [connection, handle, stealthKeypair]);
+    }, [connection, handle, stealthKeypair, publicKey, signTransaction]);
+
+    const handleUnifiedAction = async () => {
+        setError(null);
+        setSuccess(null);
+
+        let kp = stealthKeypair;
+        if (!kp) {
+            console.log("[Unified] Deriving identity first...");
+            kp = await deriveIdentity();
+            if (!kp) return;
+        }
+
+        console.log("[Unified] Proceeding to registration...");
+        await handleRegister(kp);
+    };
+
+    const isHandleValid = !validateHandle(handle);
+    const isActionDisabled = !isHandleValid || loading || fundingLoading;
 
     return (
         <div className="min-h-screen bg-black text-white relative overflow-hidden">
@@ -293,119 +335,68 @@ export default function Register() {
                         </Card>
                     ) : (
                         <>
-                            {/* Step 1: Handle Entry */}
                             <Card variant="terminal" className="border-white/10">
                                 <CardHeader>
                                     <div className="flex items-center justify-between">
                                         <CardTitle className="text-lg font-mono flex items-center gap-2">
-                                            <Badge variant="outline" className="text-[10px] uppercase">Step 1</Badge>
-                                            Choose your Handle
+                                            Register your Handle
                                         </CardTitle>
-                                        {handle && !validateHandle(handle) && (
+                                        {handle && isHandleValid && (
                                             <Badge variant="purple" className="text-[10px]">AVAILABLE</Badge>
                                         )}
                                     </div>
                                     <CardDescription>Letters, numbers, and underscores only.</CardDescription>
                                 </CardHeader>
-                                <CardContent className="space-y-4">
+                                <CardContent className="space-y-6">
                                     <div className="relative">
                                         <Input
                                             type="text"
                                             placeholder="my_secret_handle"
                                             value={handle}
                                             onChange={(e) => setHandle(e.target.value.toLowerCase())}
-                                            className="font-mono text-lg bg-white/5 border-white/10 focus:border-purple-500/50 pr-24 h-14"
-                                            disabled={loading || stealthKeypair !== null}
+                                            className="font-mono text-xl bg-white/5 border-white/10 focus:border-purple-500/50 pr-24 h-16"
+                                            disabled={loading}
                                         />
-                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-mono text-sm pointer-events-none">
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-mono text-lg pointer-events-none">
                                             .stealth
                                         </div>
                                     </div>
 
-                                    {!stealthKeypair ? (
+                                    {!success && (
                                         <Button
-                                            onClick={deriveIdentity}
-                                            disabled={!handle || !!validateHandle(handle)}
-                                            className="w-full h-12 bg-purple-600 hover:bg-purple-700 font-mono"
+                                            onClick={() => handleUnifiedAction()}
+                                            disabled={isActionDisabled}
+                                            className="w-full h-16 bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 font-bold text-lg shadow-lg shadow-purple-500/20"
                                         >
-                                            <Zap className="w-4 h-4 mr-2" />
-                                            Derive Private Identity
+                                            {loading ? (
+                                                <Loader2 className="w-6 h-6 animate-spin" />
+                                            ) : (
+                                                <>Register .stealth</>
+                                            )}
                                         </Button>
-                                    ) : (
-                                        <div className="p-4 rounded-lg bg-purple-500/5 border border-purple-500/20 space-y-3">
-                                            <div className="flex items-center justify-between text-xs font-mono">
-                                                <span className="text-gray-400">Stealth Identity:</span>
-                                                <span className="text-purple-400 truncate ml-4">{stealthKeypair.publicKey.toBase58()}</span>
-                                            </div>
-                                            <div className="flex items-center justify-between text-xs font-mono">
-                                                <span className="text-gray-400">SOL Balance:</span>
-                                                <div className="flex items-center gap-2">
-                                                    <span className={stealthBalance >= 0.003 ? "text-green-400" : "text-yellow-400 animate-pulse"}>
-                                                        {stealthBalance.toFixed(4)} SOL
-                                                    </span>
-                                                    <button onClick={() => refreshStealthBalance(stealthKeypair.publicKey)} disabled={isCheckingBalance}>
-                                                        <RefreshCw className={`w-3 h-3 text-gray-500 hover:text-white transition-colors ${isCheckingBalance ? 'animate-spin' : ''}`} />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
                                     )}
+
+                                    {/* {stealthKeypair && !success && (
+                                        <div className="p-4 rounded-lg bg-purple-500/5 border border-purple-500/20 space-y-3">
+                                        <div className="flex items-center justify-between text-[10px] font-mono">
+                                        <span className="text-gray-500 uppercase">Privacy Key (Stealth ID)</span>
+                                        <span className="text-purple-400 truncate ml-4">{stealthKeypair?.publicKey.toBase58()}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between text-[10px] font-mono">
+                                        <span className="text-gray-500 uppercase">SOL Balance</span>
+                                        <div className="flex items-center gap-2">
+                                        <span className={stealthBalance >= 0.003 ? "text-green-400" : "text-yellow-400 animate-pulse"}>
+                                        {stealthBalance.toFixed(4)} SOL
+                                        </span>
+                                        <button onClick={() => refreshStealthBalance(stealthKeypair.publicKey)} disabled={isCheckingBalance}>
+                                        <RefreshCw className={`w-3 h-3 text-gray-500 hover:text-white transition-colors ${isCheckingBalance ? 'animate-spin' : ''}`} />
+                                        </button>
+                                        </div>
+                                        </div>
+                                        </div>
+                                        )} */}
                                 </CardContent>
                             </Card>
-
-                            {/* Step 2: Privacy Check & Funding */}
-                            {stealthKeypair && (
-                                <Card variant="terminal" className={`border-white/10 ${stealthBalance < 0.003 ? "opacity-100" : "opacity-60 grayscale hover:grayscale-0 transition-all"}`}>
-                                    <CardHeader>
-                                        <CardTitle className="text-lg font-mono flex items-center gap-2">
-                                            <Badge variant="outline" className="text-[10px] uppercase">Step 2</Badge>
-                                            Privacy Check
-                                        </CardTitle>
-                                        <CardDescription>
-                                            To prevent on-chain links to your main wallet, your Stealth Identity must pay for its own registration.
-                                        </CardDescription>
-                                    </CardHeader>
-                                    <CardContent className="space-y-4">
-                                        {stealthBalance < 0.003 ? (
-                                            <div className="space-y-4">
-                                                <div className="flex items-start gap-3 p-3 rounded bg-yellow-500/5 border border-yellow-500/20 text-xs text-yellow-200/80 leading-relaxed">
-                                                    <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0 mt-0.5" />
-                                                    <p>Your Stealth Identity has insufficient SOL for rent. Funded it privately from your Light Protocol pool to maintain 100% anonymity.</p>
-                                                </div>
-                                                <Button
-                                                    onClick={handleFundIdentity}
-                                                    disabled={fundingLoading}
-                                                    variant="outline"
-                                                    className="w-full border-purple-500/50 text-purple-400 hover:bg-purple-500/10 font-mono"
-                                                >
-                                                    {fundingLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Shield className="w-4 h-4 mr-2" />}
-                                                    {fundingLoading ? "Unshielding..." : "Seed from Privacy Pool (0.005 SOL)"}
-                                                </Button>
-                                            </div>
-                                        ) : (
-                                            <div className="flex items-center gap-2 text-green-400 font-mono text-sm py-2">
-                                                <Check className="w-4 h-4" />
-                                                Identity Funded & Autonomous
-                                            </div>
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            )}
-
-                            {/* Step 3: Registration */}
-                            {stealthKeypair && stealthBalance >= 0.003 && (
-                                <Button
-                                    onClick={handleRegister}
-                                    disabled={loading || !!validateHandle(handle)}
-                                    className="w-full h-16 bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-90 font-bold text-lg shadow-lg shadow-purple-500/20 animate-in fade-in slide-in-from-bottom-2"
-                                >
-                                    {loading ? (
-                                        <Loader2 className="w-6 h-6 animate-spin" />
-                                    ) : (
-                                        <>Finalize Anonymous Registration</>
-                                    )}
-                                </Button>
-                            )}
 
                             {error && (
                                 <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-3 text-red-400 text-sm animate-shake">
@@ -425,16 +416,31 @@ export default function Register() {
                                             <p className="text-sm text-green-300/70">{success}</p>
                                         </div>
                                         {txSignature && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="border-green-500/30 text-green-400 hover:bg-green-500/10 font-mono text-[10px]"
-                                                asChild
-                                            >
-                                                <a href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`} target="_blank" rel="noopener noreferrer">
-                                                    View Transaction <ExternalLink className="w-3 h-3 ml-2" />
-                                                </a>
-                                            </Button>
+                                            <div className="space-y-3">
+                                                <div className="p-3 rounded bg-black/40 border border-white/5 text-left space-y-2">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] text-gray-500 uppercase font-mono">Request Key</span>
+                                                        <span className="text-xs font-mono text-cyan-400 truncate">{txSignature}</span>
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] text-gray-500 uppercase font-mono">Stealth Identity</span>
+                                                        <span className="text-xs font-mono text-purple-400 truncate">{stealthKeypair?.publicKey.toBase58()}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="flex-1 border-white/10 hover:bg-white/5 font-mono text-[10px]"
+                                                        asChild
+                                                    >
+                                                        <a href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`} target="_blank" rel="noopener noreferrer">
+                                                            View on Explorer <ExternalLink className="w-3 h-3 ml-2" />
+                                                        </a>
+                                                    </Button>
+                                                </div>
+                                            </div>
                                         )}
                                         <Link href="/dashboard" className="block text-xs text-gray-500 hover:text-white underline font-mono">
                                             Go to Dashboard
