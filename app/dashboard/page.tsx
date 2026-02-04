@@ -359,6 +359,8 @@ export default function Dashboard() {
                         // We can also match if we derived the key locally (less common if just logging in)
                         const isStealthIdentityAuth = stealthLinkKey && authority.toBase58() === stealthLinkKey;
 
+                        console.log(`[Dashboard] Account Scan: HandleLen=${len} Auth=${authority.toBase58()} Dest=${destination?.toBase58() || 'none'}`);
+
                         if (isMainWalletAuth || isStealthIdentityAuth) {
                             return true;
                         }
@@ -369,7 +371,8 @@ export default function Dashboard() {
                         }
 
                         return false;
-                    } catch {
+                    } catch (err) {
+                        console.log("Error parsing account:", err);
                         return false;
                     }
                 });
@@ -552,7 +555,7 @@ export default function Dashboard() {
                 console.log(`  [${i}] ${k.pubkey.toBase58()} - signer: ${k.isSigner}, writable: ${k.isWritable}`);
             });
 
-            // 8. CRITICAL: Patch instruction keys to mark tree/queue accounts as writable
+            // 8. CRITICAL: Patch instruction keys to mark tree/queue accounts as writable AND stealth key as signer
             // The Light Protocol SDK doesn't properly mark all accounts as writable,
             // causing "Cross-program invocation with unauthorized signer or writable account" error
             const SYSTEM_PROGRAM_IDS = [
@@ -565,15 +568,35 @@ export default function Dashboard() {
 
             instruction.keys = instruction.keys.map((key: any) => {
                 const pubkeyStr = key.pubkey.toBase58();
-                // Mark non-signer, non-system-program accounts as writable
-                // This includes state tree, queue, and CPI context accounts
+
+                // Fix 1: Mark non-signer, non-system-program accounts as writable
                 if (!key.isSigner && !SYSTEM_PROGRAM_IDS.includes(pubkeyStr)) {
+                    // Start with writable = true for safety on tree accounts
                     return { ...key, isWritable: true };
                 }
+
                 return key;
             });
 
-            console.log("[Unshield] Instruction Keys (after patch):");
+            // Fix 2: Ensure Stealth Identity is a Signer
+            if (stealthKeypair) {
+                const stealthPubkeyStr = stealthKeypair.publicKey.toBase58();
+                // Check if the stealth key is in the accounts list
+                const stealthKeyIndex = instruction.keys.findIndex((k: any) => k.pubkey.toBase58() === stealthPubkeyStr);
+
+                if (stealthKeyIndex >= 0) {
+                    console.log(`[Unshield] Marking stealth key ${stealthPubkeyStr} as signer`);
+                    instruction.keys[stealthKeyIndex].isSigner = true;
+                } else {
+                    // If it's NOT in the keys but we know we own the funds, we might need to ADD it?
+                    // Typically `decompress` should include the owner in the keys.
+                    // If it's missing, that's another issue.
+                    console.warn(`[Unshield] Stealth key ${stealthPubkeyStr} expecting to sign but not found in instruction keys!`);
+                }
+            }
+
+            // Add extra logging
+            console.log("[Unshield] Instruction Keys (after patches):");
             instruction.keys.forEach((k: any, i: number) => {
                 console.log(`  [${i}] ${k.pubkey.toBase58()} - signer: ${k.isSigner}, writable: ${k.isWritable}`);
             });
@@ -939,19 +962,19 @@ export default function Dashboard() {
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
-                                    {!stealthHandle && !stealthLinkKey && (
-                                        <div className="flex flex-col gap-3 p-4 rounded-lg bg-black/40 border border-cyan-500/20">
-                                            <div className="flex items-start gap-3 text-xs text-cyan-300">
-                                                <Shield className="w-4 h-4 shrink-0" />
+                                    {!stealthLinkKey && (
+                                        <div className="flex flex-col gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 animate-pulse">
+                                            <div className="flex items-start gap-3 text-xs text-yellow-200">
+                                                <AlertTriangle className="w-4 h-4 shrink-0 text-yellow-400" />
                                                 <p>
-                                                    Your current link uses your public wallet address.
-                                                    Enable a <span className="text-white font-bold">Zero-Knowledge Identifier</span> to hide it.
+                                                    <span className="font-bold">Action Required:</span> You have a registered handle but your Stealth Identity is not unlocked.
+                                                    You must sign to unlock your private profile and view funds.
                                                 </p>
                                             </div>
                                             <Button
-                                                variant="outline"
+                                                variant="default"
                                                 size="sm"
-                                                className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10 h-8 text-xs font-mono"
+                                                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold h-9 text-xs font-mono w-full"
                                                 onClick={deriveIdentity}
                                                 disabled={derivingIdentity}
                                             >
@@ -960,7 +983,7 @@ export default function Dashboard() {
                                                 ) : (
                                                     <Zap className="w-3 h-3 mr-2" />
                                                 )}
-                                                Secure My Link (One-time Sign)
+                                                Unlock Stealth Profile
                                             </Button>
                                         </div>
                                     )}
