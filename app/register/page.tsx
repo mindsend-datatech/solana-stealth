@@ -116,9 +116,13 @@ export default function Register() {
     useEffect(() => {
         setStealthKeypair(null);
         setStealthBalance(0);
-        setError(null);
-        setSuccess(null);
-        setTxStatus('idle');
+
+        // Only reset UI state if the user is typing a new handle (not when clearing on success)
+        if (handle) {
+            setError(null);
+            setSuccess(null);
+            setTxStatus('idle');
+        }
     }, [handle]);
 
     // Validate handle input
@@ -391,8 +395,8 @@ export default function Register() {
 
                                     {(txStatus === 'sending' || txStatus === 'confirming' || txStatus === 'success') && (
                                         <div className={`p-4 rounded-lg border space-y-2 ${txStatus === 'success'
-                                                ? "bg-green-500/5 border-green-500/20"
-                                                : "bg-yellow-500/5 border-yellow-500/20 animate-pulse"
+                                            ? "bg-green-500/5 border-green-500/20"
+                                            : "bg-yellow-500/5 border-yellow-500/20 animate-pulse"
                                             }`}>
                                             <div className="flex items-center justify-between">
                                                 <span className={`${txStatus === 'success' ? "text-green-400" : "text-yellow-400"} font-mono text-xs uppercase`}>Target Network</span>
