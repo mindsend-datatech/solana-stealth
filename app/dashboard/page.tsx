@@ -649,8 +649,16 @@ export default function Dashboard() {
             let signed;
             try {
                 // Determine if we need the stealth signature
+                // CRITICAL: We only sign with stealth key if the funds are NOT on the main wallet.
+                // If funds are on the main wallet, the main wallet signature (provided by adapter) is sufficient.
                 const fundsOnStealthKeys = validAccounts.some(acc => {
                     const ownerStr = acc.owner?.toBase58 ? acc.owner.toBase58() : acc.owner;
+
+                    // If owner is the connected wallet, we do NOT need stealth signature
+                    if (ownerStr === publicKey.toBase58()) {
+                        return false;
+                    }
+
                     // Check if owner is EITHER the derived key OR the registered database key
                     return (stealthLinkKey && ownerStr === stealthLinkKey) ||
                         (stealthDestination && ownerStr === stealthDestination.toBase58());
