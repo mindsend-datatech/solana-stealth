@@ -3,7 +3,7 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair, TransactionInstruction } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useState, useCallback } from "react";
 import { createRpc, Rpc, LightSystemProgram, createBN254 } from "@lightprotocol/stateless.js";
@@ -566,42 +566,44 @@ export default function Dashboard() {
                 "35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh", // Light System Program
             ];
 
-            instruction.keys = instruction.keys.map((key: any) => {
+            const patchedKeys = instruction.keys.map((key: any) => {
                 const pubkeyStr = key.pubkey.toBase58();
-
-                // Fix 1: Mark non-signer, non-system-program accounts as writable
+                // Fix: Mark non-signer, non-system-program accounts as writable
                 if (!key.isSigner && !SYSTEM_PROGRAM_IDS.includes(pubkeyStr)) {
-                    // Start with writable = true for safety on tree accounts
                     return { ...key, isWritable: true };
                 }
-
                 return key;
             });
 
-            // Fix 2: Ensure Stealth Identity is in the keys AND is a Signer
+            // Ensure Stealth Identity is added as Signer
             if (stealthKeypair) {
                 const stealthPubkeyStr = stealthKeypair.publicKey.toBase58();
-                const stealthKeyIndex = instruction.keys.findIndex((k: any) => k.pubkey.toBase58() === stealthPubkeyStr);
+                console.log(`[Unshield] Enforcing signer: ${stealthPubkeyStr}`);
 
-                if (stealthKeyIndex >= 0) {
-                    console.log(`[Unshield] Marking existing stealth key ${stealthPubkeyStr} as signer`);
-                    instruction.keys[stealthKeyIndex].isSigner = true;
+                const existingIndex = patchedKeys.findIndex(k => k.pubkey.toBase58() === stealthPubkeyStr);
+                if (existingIndex >= 0) {
+                    patchedKeys[existingIndex].isSigner = true;
+                    console.log(`[Unshield] Marked existing key as signer`);
                 } else {
-                    // CRITICAL FIX: If the owner key is missing (because it's not the payer), WE MUST ADD IT.
-                    // Web3.js will refuse to sign if the key is not in the transaction's account list.
-                    console.log(`[Unshield] Appending MISSING stealth key ${stealthPubkeyStr} as signer`);
-                    instruction.keys.push({
+                    patchedKeys.push({
                         pubkey: stealthKeypair.publicKey,
                         isSigner: true,
-                        isWritable: true // It's owning the compressed account being spent, so conceptually writable
+                        isWritable: true // Owner of UTXOs being spent
                     });
+                    console.log(`[Unshield] Appended missing signer key`);
                 }
             }
 
+            const unshieldInstruction = new TransactionInstruction({
+                programId: instruction.programId,
+                keys: patchedKeys,
+                data: instruction.data
+            });
+
             // Add extra logging
-            console.log("[Unshield] Instruction Keys (after patches):");
-            instruction.keys.forEach((k: any, i: number) => {
-                console.log(`  [${i}] ${k.pubkey.toBase58()} - signer: ${k.isSigner}, writable: ${k.isWritable}`);
+            console.log("[Unshield] Final Keys:");
+            unshieldInstruction.keys.forEach((k: any, i: number) => {
+                console.log(`  [${i}] ${k.pubkey.toBase58()} - S:${k.isSigner} W:${k.isWritable}`);
             });
 
             // 9. Build compute budget instructions
@@ -617,7 +619,7 @@ export default function Dashboard() {
 
             // 11. Build VersionedTransaction (properly respects writable flags)
             // The legacy Transaction class can incorrectly mark accounts as readonly
-            const allInstructions = [computeUnitLimit, computeUnitPrice, instruction];
+            const allInstructions = [computeUnitLimit, computeUnitPrice, unshieldInstruction];
 
             const messageV0 = new TransactionMessage({
                 payerKey: publicKey,
