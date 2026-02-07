@@ -3,7 +3,7 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair, TransactionInstruction } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useState, useCallback } from "react";
 import { createRpc, Rpc, LightSystemProgram, createBN254 } from "@lightprotocol/stateless.js";
@@ -430,37 +430,59 @@ export default function Dashboard() {
 
             const rpc = createRpc(heliusRpc, heliusRpc);
 
-            // 1. Fetch UTXOs (Shielded Accounts) from all potential owners
+            // 1. Fetch UTXOs (Shielded Accounts) from main wallet
             console.log("[Unshield] Step 1: Fetching compressed accounts...");
+            const mainAccounts = await rpc.getCompressedAccountsByOwner(publicKey);
+            console.log(`[Unshield] Found ${mainAccounts.items.length} accounts on main wallet.`);
 
-            let fetchPromises = [rpc.getCompressedAccountsByOwner(publicKey)];
-            const checkedKeys = new Set<string>([publicKey.toBase58()]);
+            // Also fetch from stealthDestination if stealthKeypair is available and matches
+            let stealthAccounts: any = { items: [] };
+            let useStealthSigner = false;
 
-            // Add Registered Destination if exists
-            if (stealthDestination) {
-                const destStr = stealthDestination.toBase58();
-                if (!checkedKeys.has(destStr)) {
-                    console.log(`[Unshield] Also fetching accounts for registered destination: ${destStr}`);
-                    fetchPromises.push(rpc.getCompressedAccountsByOwner(stealthDestination));
-                    checkedKeys.add(destStr);
+            // Debug: Log keypair and destination info
+            console.log("[Unshield] stealthKeypair:", stealthKeypair ? stealthKeypair.publicKey.toBase58() : "null");
+            console.log("[Unshield] stealthDestination:", stealthDestination ? stealthDestination.toBase58() : "null");
+            if (stealthKeypair && stealthDestination) {
+                console.log("[Unshield] keypair equals destination:", stealthKeypair.publicKey.equals(stealthDestination));
+            }
+
+            if (stealthKeypair && stealthDestination && stealthKeypair.publicKey.equals(stealthDestination)) {
+                console.log(`[Unshield] StealthKeypair matches stealthDestination. Fetching stealth accounts...`);
+                stealthAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                console.log(`[Unshield] Found ${stealthAccounts.items.length} accounts on stealth destination.`);
+                useStealthSigner = stealthAccounts.items.length > 0;
+            } else if (stealthDestination && !stealthKeypair) {
+                // Check if there are funds on stealthDestination but we don't have the keypair
+                console.log("[Unshield] No stealthKeypair, checking stealthDestination for funds...");
+                const checkAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                if (checkAccounts.items.length > 0) {
+                    alert("Found shielded funds on your stealth destination. Please click 'Derive Identity' first to unlock them.");
+                    setUnshieldLoading(false);
+                    return;
+                }
+            } else if (stealthKeypair && stealthDestination && !stealthKeypair.publicKey.equals(stealthDestination)) {
+                // Keypair exists but doesn't match - this is a problem!
+                console.warn("[Unshield] WARNING: stealthKeypair.publicKey does NOT match stealthDestination!");
+                console.warn("[Unshield] This means the derived identity doesn't match the registered destination.");
+                // Still try to fetch from stealthDestination and use stealthKeypair anyway
+                console.log("[Unshield] Attempting to fetch from stealthDestination anyway...");
+                stealthAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                console.log(`[Unshield] Found ${stealthAccounts.items.length} accounts on stealth destination.`);
+                if (stealthAccounts.items.length > 0) {
+                    // The keypair doesn't match, so we can't sign for these funds
+                    alert(`Found ${stealthAccounts.items.length} shielded funds on your stealth destination, but your derived identity doesn't match. The derived key is ${stealthKeypair.publicKey.toBase58().slice(0, 8)}... but the destination is ${stealthDestination.toBase58().slice(0, 8)}...`);
+                    setUnshieldLoading(false);
+                    return;
                 }
             }
 
-            // Add Derived Identity (if exists and unique)
-            if (stealthLinkKey) {
-                if (!checkedKeys.has(stealthLinkKey)) {
-                    try {
-                        console.log(`[Unshield] Also fetching accounts for derived identity: ${stealthLinkKey}`);
-                        fetchPromises.push(rpc.getCompressedAccountsByOwner(new PublicKey(stealthLinkKey)));
-                        checkedKeys.add(stealthLinkKey);
-                    } catch (e) {
-                        console.warn("[Unshield] Failed to prepare stealth identity fetch:", e);
-                    }
-                }
-            }
+            // Tag accounts with their source at fetch time (no need to parse owner later)
+            const taggedMainAccounts = mainAccounts.items.map((acc: any) => ({ ...acc, _source: 'main' }));
+            const taggedStealthAccounts = useStealthSigner
+                ? stealthAccounts.items.map((acc: any) => ({ ...acc, _source: 'stealth' }))
+                : [];
 
-            const results = await Promise.all(fetchPromises);
-            const allItems = results.flatMap(res => res.items);
+            const allItems = [...taggedStealthAccounts, ...taggedMainAccounts];
 
             if (allItems.length === 0) {
                 alert("No shielded funds found to unshield.");
@@ -468,13 +490,9 @@ export default function Dashboard() {
                 return;
             }
 
-            console.log(`[Unshield] Found ${allItems.length} total shielded accounts.`);
-
-            // Filter by actual treeType if needed, not by address.
+            // Filter by actual treeType - V2 trees (treeType 3) have decompression issues
             const validAccounts = allItems.filter((acc: any) => {
                 const treeType = acc.treeInfo?.treeType;
-                // treeType 1 = StateV1, treeType 2 = StateV2, treeType 3 = BatchedAddress
-                // V2 trees (treeType 3) have decompression issues
                 const isV2 = treeType === 3;
                 if (isV2) {
                     console.log(`[Unshield] Filtering out V2 tree account with treeType ${treeType}`);
@@ -482,22 +500,47 @@ export default function Dashboard() {
                 return !isV2;
             });
 
-            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${allItems.length - validAccounts.length} V2 accounts filtered out)`);
+            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${allItems.length - validAccounts.length} V2 filtered)`);
 
             if (validAccounts.length === 0) {
                 alert("No unshieldable funds found. Your shielded funds may be in a V2 tree which is not yet fully supported.");
+                setUnshieldLoading(false);
+                return;
+            }
+
+            // Partition by source tag (simple and reliable)
+            const mainWalletAccounts = validAccounts.filter((acc: any) => acc._source === 'main');
+            const stealthWalletAccounts = validAccounts.filter((acc: any) => acc._source === 'stealth');
+
+            console.log(`[Unshield] Main wallet: ${mainWalletAccounts.length}, Stealth: ${stealthWalletAccounts.length}`);
+
+            // Decide which batch to process (prioritize stealth if we have the keypair)
+            let accountsToProcess: any[];
+            let signerAuthority: PublicKey;
+            let signerKeypair: Keypair | null = null;
+
+            if (stealthWalletAccounts.length > 0 && stealthKeypair) {
+                accountsToProcess = stealthWalletAccounts;
+                signerAuthority = stealthKeypair.publicKey;
+                signerKeypair = stealthKeypair;
+                console.log(`[Unshield] Processing stealth accounts with keypair signer`);
+            } else if (mainWalletAccounts.length > 0) {
+                accountsToProcess = mainWalletAccounts;
+                signerAuthority = publicKey;
+                console.log(`[Unshield] Processing main wallet accounts`);
+            } else {
+                alert("No unshieldable funds found for your connected wallet.");
+                setUnshieldLoading(false);
                 return;
             }
 
             // 2. Hydrate accounts
-            const inputAccounts = validAccounts.map((acc: any, i: number) => {
+            const inputAccounts = accountsToProcess.map((acc: any, i: number) => {
                 const hydrated = hydrateAccount(acc, i);
                 console.log(`[Unshield] Hydrated account ${i}:`, {
                     hash: hydrated.hash.toString(),
                     lamports: hydrated.lamports.toString(),
-                    tree: hydrated.treeInfo?.tree?.toBase58(),
-                    queue: hydrated.treeInfo?.queue?.toBase58(),
-                    treeType: hydrated.treeInfo?.treeType
+                    owner: hydrated.owner?.toBase58()
                 });
                 return hydrated;
             });
@@ -509,17 +552,10 @@ export default function Dashboard() {
                 tree: account.treeInfo.tree,
                 queue: account.treeInfo.queue
             }));
-            console.log("[Unshield] Proof inputs:", proofInputs.map((p: any) => ({
-                hash: p.hash.toString(),
-                tree: p.tree.toBase58(),
-                queue: p.queue.toBase58()
-            })));
 
             // @ts-ignore
             const validityProof = await rpc.getValidityProofV0(proofInputs, []);
-            console.log("[Unshield] Validity proof received:", {
-                rootIndices: validityProof.rootIndices
-            });
+            console.log("[Unshield] Validity proof received");
 
             // 4. Calculate Total
             const totalToUnshield = inputAccounts.reduce(
@@ -533,21 +569,25 @@ export default function Dashboard() {
             if (useCustomDestination && destinationAddress.trim()) {
                 toAddress = new PublicKey(destinationAddress.trim());
             } else {
-                toAddress = publicKey;
+                toAddress = publicKey; // Always send to main wallet
             }
             console.log("[Unshield] Destination:", toAddress.toBase58());
 
             // 6. Build Decompress Instruction
             console.log("[Unshield] Step 6: Building decompress instruction...");
+            console.log(`[Unshield] Authority: ${signerAuthority.toBase58()}`);
+
             // @ts-ignore
             const instruction = await LightSystemProgram.decompress({
-                payer: publicKey,
+                payer: signerAuthority, // The owner of the compressed accounts
                 inputCompressedAccounts: inputAccounts as any,
                 toAddress: toAddress,
                 lamports: totalToUnshield,
                 recentValidityProof: validityProof.compressedProof,
                 recentInputStateRootIndices: validityProof.rootIndices
             });
+
+
 
             // 7. Debug: Log instruction keys for diagnostics
             console.log("[Unshield] Instruction Keys (before patch):");
@@ -575,24 +615,7 @@ export default function Dashboard() {
                 return key;
             });
 
-            // Ensure Stealth Identity is added as Signer
-            if (stealthKeypair) {
-                const stealthPubkeyStr = stealthKeypair.publicKey.toBase58();
-                console.log(`[Unshield] Enforcing signer: ${stealthPubkeyStr}`);
-
-                const existingIndex = patchedKeys.findIndex(k => k.pubkey.toBase58() === stealthPubkeyStr);
-                if (existingIndex >= 0) {
-                    patchedKeys[existingIndex].isSigner = true;
-                    console.log(`[Unshield] Marked existing key as signer`);
-                } else {
-                    patchedKeys.push({
-                        pubkey: stealthKeypair.publicKey,
-                        isSigner: true,
-                        isWritable: true // Owner of UTXOs being spent
-                    });
-                    console.log(`[Unshield] Appended missing signer key`);
-                }
-            }
+            instruction.keys = patchedKeys;
 
             const unshieldInstruction = new TransactionInstruction({
                 programId: instruction.programId,
@@ -617,9 +640,24 @@ export default function Dashboard() {
             // 10. Get blockhash for versioned transaction
             const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
 
-            // 11. Build VersionedTransaction (properly respects writable flags)
-            // The legacy Transaction class can incorrectly mark accounts as readonly
-            const allInstructions = [computeUnitLimit, computeUnitPrice, unshieldInstruction];
+            // 11. Build transaction instructions
+            // If using stealth keypair, we need to fund it first for rent fees
+            const allInstructions = [computeUnitLimit, computeUnitPrice];
+
+            if (signerKeypair) {
+                // Add a small transfer to fund the stealth account for rent
+                // The stealth account needs to be rent-exempt (~890,880 lamports minimum)
+                const fundingAmount = 1000000; // 0.001 SOL - covers rent-exemption
+                console.log(`[Unshield] Adding funding transfer: ${fundingAmount} lamports to stealth account`);
+                const fundingInstruction = SystemProgram.transfer({
+                    fromPubkey: publicKey, // Main wallet funds it
+                    toPubkey: signerAuthority, // Stealth account receives
+                    lamports: fundingAmount,
+                });
+                allInstructions.push(fundingInstruction);
+            }
+
+            allInstructions.push(unshieldInstruction);
 
             const messageV0 = new TransactionMessage({
                 payerKey: publicKey,
@@ -648,59 +686,14 @@ export default function Dashboard() {
 
             let signed;
             try {
-                // Determine if we need the stealth signature
-                // CRITICAL: We only sign with stealth key if the funds are NOT on the main wallet.
-                // If funds are on the main wallet, the main wallet signature (provided by adapter) is sufficient.
-                const fundsOnStealthKeys = validAccounts.some(acc => {
-                    const ownerStr = acc.owner?.toBase58 ? acc.owner.toBase58() : acc.owner;
-
-                    // If owner is the connected wallet, we do NOT need stealth signature
-                    if (ownerStr === publicKey.toBase58()) {
-                        return false;
-                    }
-
-                    // Check if owner is EITHER the derived key OR the registered database key
-                    return (stealthLinkKey && ownerStr === stealthLinkKey) ||
-                        (stealthDestination && ownerStr === stealthDestination.toBase58());
-                });
-
-                if (fundsOnStealthKeys) {
-                    // Check if we ACTUALLY have the keypair
-                    let kpToUse = stealthKeypair;
-
-                    // If we don't have the keypair derived yet, we CANNOT sign.
-                    if (!kpToUse) {
-                        // Attempt to prompt auto-derivation or fail
-                        // Since we are in the middle of a flow, async derivation might be tricky if it requires user interaction that react state updates rely on.
-                        // But we can try calling deriveIdentity() if we weren't in a hook.
-                        // BETTER: Halt and tell user they need to "Unlock" first.
-
-                        // Double check: if stealthDestination is set, maybe the user hasn't clicked "Derive" yet.
-                        // Let's force a call to the derive function if it's available in scope?
-                        // We have `deriveIdentity` function in scope.
-
-                        if (window.confirm("Shielded funds found on your Stealth Identity. You need to sign a message to unlock/derive your Stealth Key first. Proceed?")) {
-                            await deriveIdentity();
-                            // Wait a split second for state to update? 
-                            // deriveIdentity sets state, but current closure might have stale state.
-                            // However, deriveIdentity is async. 
-
-                            // Actually, since `stealthKeypair` is from state, it won't update in this closure.
-                            // We need to re-invoke logic or fail and ask user to try again.
-
-                            alert("Identity derived! Please click 'Unshield' again to proceed.");
-                            setUnshieldLoading(false);
-                            return;
-                        } else {
-                            throw new Error("Cannot unshield private funds without unlocking Stealth Identity.");
-                        }
-                    } else {
-                        console.log("[Unshield] Pre-signing with stealth identity keypair...");
-                        versionedTx.sign([kpToUse]);
-                    }
+                // If using stealth keypair as authority, sign with it first
+                if (signerKeypair) {
+                    console.log("[Unshield] Pre-signing with stealth keypair...");
+                    versionedTx.sign([signerKeypair]);
+                    console.log("[Unshield] Stealth keypair signature added");
                 }
 
-                // signTransaction should handle VersionedTransaction and preserve existing signatures
+                // Then have wallet sign (for fee payer - publicKey)
                 signed = await signTransaction(versionedTx as any);
                 console.log("[Unshield] Transaction signed successfully by wallet");
             } catch (signError: any) {
