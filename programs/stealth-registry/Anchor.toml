@@ -1,7 +1,7 @@
 [toolchain]
 package_manager = "yarn"
-anchor_version = "0.29.0"
-solana_version = "1.17.34"
+anchor_version = "0.30.1"
+solana_version = "1.18.23"
 
 [features]
 resolution = true
@@ -10,8 +10,8 @@ skip-lint = false
 [programs.devnet]
 stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
 
-[programs.devnet]
-stealth_registry = "DbGF1"
+[programs.localnet]
+stealth_registry = "DbGF7nB2kuMpRxwm4b6n11XcWzwvysDGQGztJ4Wvvu13"
 
 [registry]
 url = "https://api.apr.dev"
