@@ -1,14 +1,17 @@
-name: Test
+name: Solana Stealth Tests
 
 on:
   push:
     branches: [ main, test/** ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
+  release:
+    types: [ published ]
 
 jobs:
   frontend-tests:
-    name: Frontend Tests (Vitest)
+    name: Frontend Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,31 +20,116 @@ jobs:
           node-version: '20'
       - run: corepack enable
       - run: yarn install --frozen-lockfile
-      - run: yarn test
+      - run: yarn test --run
 
-  anchor-tests:
-    name: Anchor Program Tests
+  anchor-build:
+    name: Anchor Build
     runs-on: ubuntu-latest
-    if: false  # Temporarily disabled - Solana tests need fixes
+    # Environment variables MUST be set at job level for setup-all action
+    env:
+      SOLANA_VERSION: "1.18.23"
+      ANCHOR_VERSION: "0.30.1"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set versions
-        run: |
-          echo "SOLANA_VERSION=1.17.34" >> $GITHUB_ENV
-          echo "ANCHOR_VERSION=0.29.0" >> $GITHUB_ENV
-
-      - uses: solana-developers/github-actions/setup-all@v0.2.5
+      - name: Setup Anchor environment
+        uses: solana-developers/github-actions/setup-all@v0.2.5
         with:
-          solana_version: "1.17.34"
-          anchor_version: "0.29.0"
+          solana_version: ${{ env.SOLANA_VERSION }}
+          anchor_version: ${{ env.ANCHOR_VERSION }}
           node_version: "20"
 
-      - name: Install dependencies
+      - name: Verify toolchain
+        run: |
+          echo "Solana: $(solana --version)"
+          echo "Anchor: $(anchor --version)"
+          echo "Rust: $(rustc --version)"
+
+      - name: Install program dependencies
         working-directory: programs/stealth-registry
         run: yarn install
 
-      - name: Run Anchor Tests
+      - name: Build Anchor program
+        working-directory: programs/stealth-registry
+        run: anchor build
+
+      - name: Verify build output
+        working-directory: programs/stealth-registry
+        run: |
+          echo "Build artifacts:"
+          ls -la target/deploy/
+          echo "Program binary size:"
+          ls -lh target/deploy/stealth_registry.so
+
+  anchor-tests:
+    name: Anchor Tests
+    runs-on: ubuntu-latest
+    needs: anchor-build
+    env:
+      SOLANA_VERSION: "1.18.23"
+      ANCHOR_VERSION: "0.30.1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Anchor environment
+        uses: solana-developers/github-actions/setup-all@v0.2.5
+        with:
+          solana_version: ${{ env.SOLANA_VERSION }}
+          anchor_version: ${{ env.ANCHOR_VERSION }}
+          node_version: "20"
+
+      - name: Install program dependencies
+        working-directory: programs/stealth-registry
+        run: yarn install
+
+      - name: Run Anchor tests
         working-directory: programs/stealth-registry
         run: anchor test
+
+  # Verified Build - Only runs on releases/tags for production deployments
+  verified-build:
+    name: Verified Build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
+    env:
+      SOLANA_VERSION: "1.18.23"
+      ANCHOR_VERSION: "0.30.1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Anchor environment
+        uses: solana-developers/github-actions/setup-all@v0.2.5
+        with:
+          solana_version: ${{ env.SOLANA_VERSION }}
+          anchor_version: ${{ env.ANCHOR_VERSION }}
+          verify_version: "0.2.0"
+          node_version: "20"
+
+      - name: Build verified program
+        working-directory: programs/stealth-registry
+        run: solana-verify build --library-name stealth_registry
+
+      - name: Get executable hash
+        id: hash
+        working-directory: programs/stealth-registry
+        run: |
+          HASH=$(solana-verify get-executable-hash target/deploy/stealth_registry.so)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "Verified build hash: $HASH"
+
+      - name: Upload verified build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stealth-registry-verified-${{ github.ref_name }}
+          path: programs/stealth-registry/target/deploy/stealth_registry.so
+          retention-days: 90
+
+      - name: Build summary
+        run: |
+          echo "## Verified Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Executable Hash:** \`${{ steps.hash.outputs.hash }}\`" >> $GITHUB_STEP_SUMMARY
