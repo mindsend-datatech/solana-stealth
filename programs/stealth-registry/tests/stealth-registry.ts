@@ -38,6 +38,7 @@ describe("stealth-registry", () => {
     const tx = await program.methods
       .register(handle, destinationKp.publicKey)
       .accounts({
+        payer: provider.wallet.publicKey,
         authority: provider.wallet.publicKey,
         registryEntry: registryPda,
         systemProgram: SystemProgram.programId,
@@ -87,6 +88,7 @@ describe("stealth-registry", () => {
       const anchorIx = await program.methods
         .register(handle, destinationKp.publicKey)
         .accounts({
+          payer: provider.wallet.publicKey,
           authority: provider.wallet.publicKey,
           registryEntry: registryPda,
           systemProgram: SystemProgram.programId,
