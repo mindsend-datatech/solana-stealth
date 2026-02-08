@@ -20,6 +20,12 @@ import BN from "bn.js";
 // Force dynamic since we use params
 export const dynamic = 'force-dynamic';
 
+// Helper function to truncate public key for display
+function truncatePubkey(pubkey: string): string {
+    if (pubkey.length <= 10) return pubkey;
+    return `${pubkey.slice(0, 4)}...${pubkey.slice(-4)}`;
+}
+
 export async function GET(
     request: Request,
     { params }: { params: Promise<{ username: string }> }
@@ -35,7 +41,9 @@ export async function GET(
     } else {
         try {
             new PublicKey(username);
-            title = `Donate Privately (Secure v2)`;
+            const truncated = truncatePubkey(username);
+            title = `Donate Privately to ${truncated} (Secure v2)`;
+            description = `Support this creator with a shielded donation. Your funds will be compressed into a private UTXO owned by ${username}. Privacy by Default.`;
         } catch {
             title = "Invalid Creator Address";
         }
