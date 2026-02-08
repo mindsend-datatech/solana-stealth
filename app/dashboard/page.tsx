@@ -3,7 +3,7 @@
 
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
-import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, PublicKey, ComputeBudgetProgram, TransactionMessage, VersionedTransaction, Keypair, TransactionInstruction, SystemProgram } from "@solana/web3.js";
 import BN from "bn.js";
 import { useEffect, useState, useCallback } from "react";
 import { createRpc, Rpc, LightSystemProgram, createBN254 } from "@lightprotocol/stateless.js";
@@ -158,6 +158,7 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(false);
     const [unshieldLoading, setUnshieldLoading] = useState(false);
     const [mounted, setMounted] = useState(false);
+    const [stealthDestination, setStealthDestination] = useState<PublicKey | null>(null);
 
     useEffect(() => {
         setMounted(true);
@@ -241,22 +242,41 @@ export default function Dashboard() {
 
                 const rpc = createRpc(heliusRpc, heliusRpc);
 
-                // Fetch for Main Wallet
+                // 1. Fetch for Main Wallet
                 console.log(`[Dashboard] Fetching shielded balance for main wallet: ${publicKey.toBase58()}`);
                 const mainCompressedBalance = await rpc.getCompressedBalanceByOwner(publicKey);
-                console.log(`[Dashboard] Main balance response:`, mainCompressedBalance);
                 let total = mainCompressedBalance.toNumber ? mainCompressedBalance.toNumber() : Number(mainCompressedBalance);
 
-                // Fetch for Stealth Identity (if derived)
+                // Track accumulated balances to avoid duplicates if keys overlap
+                const checkedKeys = new Set<string>([publicKey.toBase58()]);
+
+                // 2. Fetch for Registered Stealth Destination
+                if (stealthDestination) {
+                    const destStr = stealthDestination.toBase58();
+                    if (!checkedKeys.has(destStr)) {
+                        console.log(`[Dashboard] Fetching shielded balance for registered destination: ${destStr}`);
+                        try {
+                            const destBalance = await rpc.getCompressedBalanceByOwner(stealthDestination);
+                            total += destBalance.toNumber ? destBalance.toNumber() : Number(destBalance);
+                            checkedKeys.add(destStr);
+                        } catch (e) {
+                            console.warn("Failed to fetch registered destination balance:", e);
+                        }
+                    }
+                }
+
+                // 3. Fetch for Derived Stealth Identity (if different from above)
                 if (stealthLinkKey) {
-                    try {
-                        const stealthPk = new PublicKey(stealthLinkKey);
-                        console.log(`[Dashboard] Fetching shielded balance for stealth identity: ${stealthPk.toBase58()}`);
-                        const stealthCompressedBalance = await rpc.getCompressedBalanceByOwner(stealthPk);
-                        console.log(`[Dashboard] Stealth balance response:`, stealthCompressedBalance);
-                        total += stealthCompressedBalance.toNumber ? stealthCompressedBalance.toNumber() : Number(stealthCompressedBalance);
-                    } catch (e) {
-                        console.warn("Failed to fetch stealth identity balance:", e);
+                    if (!checkedKeys.has(stealthLinkKey)) {
+                        try {
+                            const stealthPk = new PublicKey(stealthLinkKey);
+                            console.log(`[Dashboard] Fetching shielded balance for derived stealth identity: ${stealthPk.toBase58()}`);
+                            const stealthCompressedBalance = await rpc.getCompressedBalanceByOwner(stealthPk);
+                            total += stealthCompressedBalance.toNumber ? stealthCompressedBalance.toNumber() : Number(stealthCompressedBalance);
+                            checkedKeys.add(stealthLinkKey);
+                        } catch (e) {
+                            console.warn("Failed to fetch stealth identity balance:", e);
+                        }
                     }
                 }
 
@@ -275,7 +295,7 @@ export default function Dashboard() {
         fetchShielded();
         const interval = setInterval(fetchShielded, 10000);
         return () => clearInterval(interval);
-    }, [publicKey, connected, connection, stealthLinkKey]);
+    }, [publicKey, connected, connection, stealthLinkKey, stealthDestination]);
 
     // Fetch SNS Domain
     const [snsName, setSnsName] = useState<string | null>(null);
@@ -300,11 +320,13 @@ export default function Dashboard() {
         fetchSns();
     }, [publicKey, connected, connection]);
 
-    // Fetch Stealth Registry Handle
+    // Stealth Registry Handle
     const [stealthHandle, setStealthHandle] = useState<string | null>(null);
+
     useEffect(() => {
         if (!publicKey || !connected) {
             setStealthHandle(null);
+            setStealthDestination(null);
             return;
         }
 
@@ -326,19 +348,31 @@ export default function Dashboard() {
 
                         const authority = new PublicKey(data.subarray(authOffset, authOffset + 32));
                         const isMainWalletAuth = authority.equals(publicKey);
-                        const isStealthIdentityAuth = stealthLinkKey && authority.toBase58() === stealthLinkKey;
-
-                        if (isMainWalletAuth || isStealthIdentityAuth) return true;
 
                         // Check destination_pubkey (New Structure)
                         const destOffset = authOffset + 32;
+                        let destination: PublicKey | null = null;
                         if (data.length >= destOffset + 32) {
-                            const destination = new PublicKey(data.subarray(destOffset, destOffset + 32));
-                            return destination.equals(publicKey);
+                            destination = new PublicKey(data.subarray(destOffset, destOffset + 32));
+                        }
+
+                        // We can also match if we derived the key locally (less common if just logging in)
+                        const isStealthIdentityAuth = stealthLinkKey && authority.toBase58() === stealthLinkKey;
+
+                        console.log(`[Dashboard] Account Scan: HandleLen=${len} Auth=${authority.toBase58()} Dest=${destination?.toBase58() || 'none'}`);
+
+                        if (isMainWalletAuth || isStealthIdentityAuth) {
+                            return true;
+                        }
+
+                        // Also check if the destination is YOU (the main wallet) - though usually auth is you.
+                        if (destination && destination.equals(publicKey)) {
+                            return true;
                         }
 
                         return false;
-                    } catch {
+                    } catch (err) {
+                        console.log("Error parsing account:", err);
                         return false;
                     }
                 });
@@ -348,8 +382,18 @@ export default function Dashboard() {
                     const len = data.readUInt32LE(8);
                     const handle = data.subarray(12, 12 + len).toString('utf8');
                     setStealthHandle(handle);
+
+                    // Extract destination
+                    const authOffset = 8 + 4 + len;
+                    const destOffset = authOffset + 32;
+                    if (data.length >= destOffset + 32) {
+                        const destination = new PublicKey(data.subarray(destOffset, destOffset + 32));
+                        console.log(`[Dashboard] Found registered stealth destination: ${destination.toBase58()}`);
+                        setStealthDestination(destination);
+                    }
                 } else {
                     setStealthHandle(null);
+                    setStealthDestination(null);
                 }
             } catch (e) {
                 console.warn("Failed to fetch stealth handle:", e);
@@ -386,21 +430,59 @@ export default function Dashboard() {
 
             const rpc = createRpc(heliusRpc, heliusRpc);
 
-            // 1. Fetch UTXOs (Shielded Accounts) from all potential owners
+            // 1. Fetch UTXOs (Shielded Accounts) from main wallet
             console.log("[Unshield] Step 1: Fetching compressed accounts...");
+            const mainAccounts = await rpc.getCompressedAccountsByOwner(publicKey);
+            console.log(`[Unshield] Found ${mainAccounts.items.length} accounts on main wallet.`);
 
-            const fetchPromises = [rpc.getCompressedAccountsByOwner(publicKey)];
-            if (stealthLinkKey) {
-                try {
-                    console.log(`[Unshield] Also fetching accounts for stealth identity: ${stealthLinkKey}`);
-                    fetchPromises.push(rpc.getCompressedAccountsByOwner(new PublicKey(stealthLinkKey)));
-                } catch (e) {
-                    console.warn("[Unshield] Failed to prepare stealth identity fetch:", e);
+            // Also fetch from stealthDestination if stealthKeypair is available and matches
+            let stealthAccounts: any = { items: [] };
+            let useStealthSigner = false;
+
+            // Debug: Log keypair and destination info
+            console.log("[Unshield] stealthKeypair:", stealthKeypair ? stealthKeypair.publicKey.toBase58() : "null");
+            console.log("[Unshield] stealthDestination:", stealthDestination ? stealthDestination.toBase58() : "null");
+            if (stealthKeypair && stealthDestination) {
+                console.log("[Unshield] keypair equals destination:", stealthKeypair.publicKey.equals(stealthDestination));
+            }
+
+            if (stealthKeypair && stealthDestination && stealthKeypair.publicKey.equals(stealthDestination)) {
+                console.log(`[Unshield] StealthKeypair matches stealthDestination. Fetching stealth accounts...`);
+                stealthAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                console.log(`[Unshield] Found ${stealthAccounts.items.length} accounts on stealth destination.`);
+                useStealthSigner = stealthAccounts.items.length > 0;
+            } else if (stealthDestination && !stealthKeypair) {
+                // Check if there are funds on stealthDestination but we don't have the keypair
+                console.log("[Unshield] No stealthKeypair, checking stealthDestination for funds...");
+                const checkAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                if (checkAccounts.items.length > 0) {
+                    alert("Found shielded funds on your stealth destination. Please click 'Derive Identity' first to unlock them.");
+                    setUnshieldLoading(false);
+                    return;
+                }
+            } else if (stealthKeypair && stealthDestination && !stealthKeypair.publicKey.equals(stealthDestination)) {
+                // Keypair exists but doesn't match - this is a problem!
+                console.warn("[Unshield] WARNING: stealthKeypair.publicKey does NOT match stealthDestination!");
+                console.warn("[Unshield] This means the derived identity doesn't match the registered destination.");
+                // Still try to fetch from stealthDestination and use stealthKeypair anyway
+                console.log("[Unshield] Attempting to fetch from stealthDestination anyway...");
+                stealthAccounts = await rpc.getCompressedAccountsByOwner(stealthDestination);
+                console.log(`[Unshield] Found ${stealthAccounts.items.length} accounts on stealth destination.`);
+                if (stealthAccounts.items.length > 0) {
+                    // The keypair doesn't match, so we can't sign for these funds
+                    alert(`Found ${stealthAccounts.items.length} shielded funds on your stealth destination, but your derived identity doesn't match. The derived key is ${stealthKeypair.publicKey.toBase58().slice(0, 8)}... but the destination is ${stealthDestination.toBase58().slice(0, 8)}...`);
+                    setUnshieldLoading(false);
+                    return;
                 }
             }
 
-            const results = await Promise.all(fetchPromises);
-            const allItems = results.flatMap(res => res.items);
+            // Tag accounts with their source at fetch time (no need to parse owner later)
+            const taggedMainAccounts = mainAccounts.items.map((acc: any) => ({ ...acc, _source: 'main' }));
+            const taggedStealthAccounts = useStealthSigner
+                ? stealthAccounts.items.map((acc: any) => ({ ...acc, _source: 'stealth' }))
+                : [];
+
+            const allItems = [...taggedStealthAccounts, ...taggedMainAccounts];
 
             if (allItems.length === 0) {
                 alert("No shielded funds found to unshield.");
@@ -408,13 +490,9 @@ export default function Dashboard() {
                 return;
             }
 
-            console.log(`[Unshield] Found ${allItems.length} total shielded accounts.`);
-
-            // Filter by actual treeType if needed, not by address.
+            // Filter by actual treeType - V2 trees (treeType 3) have decompression issues
             const validAccounts = allItems.filter((acc: any) => {
                 const treeType = acc.treeInfo?.treeType;
-                // treeType 1 = StateV1, treeType 2 = StateV2, treeType 3 = BatchedAddress
-                // V2 trees (treeType 3) have decompression issues
                 const isV2 = treeType === 3;
                 if (isV2) {
                     console.log(`[Unshield] Filtering out V2 tree account with treeType ${treeType}`);
@@ -422,22 +500,47 @@ export default function Dashboard() {
                 return !isV2;
             });
 
-            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${allItems.length - validAccounts.length} V2 accounts filtered out)`);
+            console.log(`[Unshield] Found ${validAccounts.length} valid accounts (${allItems.length - validAccounts.length} V2 filtered)`);
 
             if (validAccounts.length === 0) {
                 alert("No unshieldable funds found. Your shielded funds may be in a V2 tree which is not yet fully supported.");
+                setUnshieldLoading(false);
+                return;
+            }
+
+            // Partition by source tag (simple and reliable)
+            const mainWalletAccounts = validAccounts.filter((acc: any) => acc._source === 'main');
+            const stealthWalletAccounts = validAccounts.filter((acc: any) => acc._source === 'stealth');
+
+            console.log(`[Unshield] Main wallet: ${mainWalletAccounts.length}, Stealth: ${stealthWalletAccounts.length}`);
+
+            // Decide which batch to process (prioritize stealth if we have the keypair)
+            let accountsToProcess: any[];
+            let signerAuthority: PublicKey;
+            let signerKeypair: Keypair | null = null;
+
+            if (stealthWalletAccounts.length > 0 && stealthKeypair) {
+                accountsToProcess = stealthWalletAccounts;
+                signerAuthority = stealthKeypair.publicKey;
+                signerKeypair = stealthKeypair;
+                console.log(`[Unshield] Processing stealth accounts with keypair signer`);
+            } else if (mainWalletAccounts.length > 0) {
+                accountsToProcess = mainWalletAccounts;
+                signerAuthority = publicKey;
+                console.log(`[Unshield] Processing main wallet accounts`);
+            } else {
+                alert("No unshieldable funds found for your connected wallet.");
+                setUnshieldLoading(false);
                 return;
             }
 
             // 2. Hydrate accounts
-            const inputAccounts = validAccounts.map((acc: any, i: number) => {
+            const inputAccounts = accountsToProcess.map((acc: any, i: number) => {
                 const hydrated = hydrateAccount(acc, i);
                 console.log(`[Unshield] Hydrated account ${i}:`, {
                     hash: hydrated.hash.toString(),
                     lamports: hydrated.lamports.toString(),
-                    tree: hydrated.treeInfo?.tree?.toBase58(),
-                    queue: hydrated.treeInfo?.queue?.toBase58(),
-                    treeType: hydrated.treeInfo?.treeType
+                    owner: hydrated.owner?.toBase58()
                 });
                 return hydrated;
             });
@@ -449,17 +552,10 @@ export default function Dashboard() {
                 tree: account.treeInfo.tree,
                 queue: account.treeInfo.queue
             }));
-            console.log("[Unshield] Proof inputs:", proofInputs.map((p: any) => ({
-                hash: p.hash.toString(),
-                tree: p.tree.toBase58(),
-                queue: p.queue.toBase58()
-            })));
 
             // @ts-ignore
             const validityProof = await rpc.getValidityProofV0(proofInputs, []);
-            console.log("[Unshield] Validity proof received:", {
-                rootIndices: validityProof.rootIndices
-            });
+            console.log("[Unshield] Validity proof received");
 
             // 4. Calculate Total
             const totalToUnshield = inputAccounts.reduce(
@@ -473,15 +569,17 @@ export default function Dashboard() {
             if (useCustomDestination && destinationAddress.trim()) {
                 toAddress = new PublicKey(destinationAddress.trim());
             } else {
-                toAddress = publicKey;
+                toAddress = publicKey; // Always send to main wallet
             }
             console.log("[Unshield] Destination:", toAddress.toBase58());
 
             // 6. Build Decompress Instruction
             console.log("[Unshield] Step 6: Building decompress instruction...");
+            console.log(`[Unshield] Authority: ${signerAuthority.toBase58()}`);
+
             // @ts-ignore
             const instruction = await LightSystemProgram.decompress({
-                payer: publicKey,
+                payer: signerAuthority, // The owner of the compressed accounts
                 inputCompressedAccounts: inputAccounts as any,
                 toAddress: toAddress,
                 lamports: totalToUnshield,
@@ -489,13 +587,15 @@ export default function Dashboard() {
                 recentInputStateRootIndices: validityProof.rootIndices
             });
 
+
+
             // 7. Debug: Log instruction keys for diagnostics
             console.log("[Unshield] Instruction Keys (before patch):");
             instruction.keys.forEach((k: any, i: number) => {
                 console.log(`  [${i}] ${k.pubkey.toBase58()} - signer: ${k.isSigner}, writable: ${k.isWritable}`);
             });
 
-            // 8. CRITICAL: Patch instruction keys to mark tree/queue accounts as writable
+            // 8. CRITICAL: Patch instruction keys to mark tree/queue accounts as writable AND stealth key as signer
             // The Light Protocol SDK doesn't properly mark all accounts as writable,
             // causing "Cross-program invocation with unauthorized signer or writable account" error
             const SYSTEM_PROGRAM_IDS = [
@@ -506,19 +606,27 @@ export default function Dashboard() {
                 "35hkDgaAKwMCaxRz2ocSZ6NaUrtKkyNqU6c4RV3tYJRh", // Light System Program
             ];
 
-            instruction.keys = instruction.keys.map((key: any) => {
+            const patchedKeys = instruction.keys.map((key: any) => {
                 const pubkeyStr = key.pubkey.toBase58();
-                // Mark non-signer, non-system-program accounts as writable
-                // This includes state tree, queue, and CPI context accounts
+                // Fix: Mark non-signer, non-system-program accounts as writable
                 if (!key.isSigner && !SYSTEM_PROGRAM_IDS.includes(pubkeyStr)) {
                     return { ...key, isWritable: true };
                 }
                 return key;
             });
 
-            console.log("[Unshield] Instruction Keys (after patch):");
-            instruction.keys.forEach((k: any, i: number) => {
-                console.log(`  [${i}] ${k.pubkey.toBase58()} - signer: ${k.isSigner}, writable: ${k.isWritable}`);
+            instruction.keys = patchedKeys;
+
+            const unshieldInstruction = new TransactionInstruction({
+                programId: instruction.programId,
+                keys: patchedKeys,
+                data: instruction.data
+            });
+
+            // Add extra logging
+            console.log("[Unshield] Final Keys:");
+            unshieldInstruction.keys.forEach((k: any, i: number) => {
+                console.log(`  [${i}] ${k.pubkey.toBase58()} - S:${k.isSigner} W:${k.isWritable}`);
             });
 
             // 9. Build compute budget instructions
@@ -532,9 +640,24 @@ export default function Dashboard() {
             // 10. Get blockhash for versioned transaction
             const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
 
-            // 11. Build VersionedTransaction (properly respects writable flags)
-            // The legacy Transaction class can incorrectly mark accounts as readonly
-            const allInstructions = [computeUnitLimit, computeUnitPrice, instruction];
+            // 11. Build transaction instructions
+            // If using stealth keypair, we need to fund it first for rent fees
+            const allInstructions = [computeUnitLimit, computeUnitPrice];
+
+            if (signerKeypair) {
+                // Add a small transfer to fund the stealth account for rent
+                // The stealth account needs to be rent-exempt (~890,880 lamports minimum)
+                const fundingAmount = 1000000; // 0.001 SOL - covers rent-exemption
+                console.log(`[Unshield] Adding funding transfer: ${fundingAmount} lamports to stealth account`);
+                const fundingInstruction = SystemProgram.transfer({
+                    fromPubkey: publicKey, // Main wallet funds it
+                    toPubkey: signerAuthority, // Stealth account receives
+                    lamports: fundingAmount,
+                });
+                allInstructions.push(fundingInstruction);
+            }
+
+            allInstructions.push(unshieldInstruction);
 
             const messageV0 = new TransactionMessage({
                 payerKey: publicKey,
@@ -563,18 +686,14 @@ export default function Dashboard() {
 
             let signed;
             try {
-                // If any accounts are owned by the stealth identity, we must sign with the stealth keypair
-                const needsStealthSig = validAccounts.some(acc => {
-                    const ownerStr = acc.owner?.toBase58 ? acc.owner.toBase58() : acc.owner;
-                    return ownerStr === stealthLinkKey;
-                });
-
-                if (needsStealthSig && stealthKeypair) {
-                    console.log("[Unshield] Pre-signing with stealth identity keypair...");
-                    versionedTx.sign([stealthKeypair]);
+                // If using stealth keypair as authority, sign with it first
+                if (signerKeypair) {
+                    console.log("[Unshield] Pre-signing with stealth keypair...");
+                    versionedTx.sign([signerKeypair]);
+                    console.log("[Unshield] Stealth keypair signature added");
                 }
 
-                // signTransaction should handle VersionedTransaction and preserve existing signatures
+                // Then have wallet sign (for fee payer - publicKey)
                 signed = await signTransaction(versionedTx as any);
                 console.log("[Unshield] Transaction signed successfully by wallet");
             } catch (signError: any) {
@@ -801,10 +920,26 @@ export default function Dashboard() {
                                                     </h3>
                                                 </div>
                                             </div>
-                                            <Badge variant="purple" className="gap-1">
-                                                <Shield className="w-3 h-3" />
-                                                Private
-                                            </Badge>
+
+                                            {/* Show Unlock/Sync button if we have funds on a destination but no local key */}
+                                            {shieldedBalance > 0 && !stealthKeypair && stealthDestination && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 text-xs border-purple-500/50 text-purple-300 hover:bg-purple-900/30 font-mono"
+                                                    onClick={deriveIdentity}
+                                                    disabled={derivingIdentity}
+                                                >
+                                                    {derivingIdentity ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                                                    Unlock Funds
+                                                </Button>
+                                            )}
+                                            {(!shieldedBalance || !!stealthKeypair || !stealthDestination) && (
+                                                <Badge variant="purple" className="gap-1">
+                                                    <Shield className="w-3 h-3" />
+                                                    Private
+                                                </Badge>
+                                            )}
                                         </div>
                                         <p className="text-4xl font-bold font-mono text-white">{shieldedBalance.toFixed(4)} <span className="text-lg text-gray-500">SOL</span></p>
                                         <p className="text-xs text-gray-400 mt-2">
@@ -833,19 +968,19 @@ export default function Dashboard() {
                                     </CardDescription>
                                 </CardHeader>
                                 <CardContent className="space-y-4">
-                                    {!stealthHandle && !stealthLinkKey && (
-                                        <div className="flex flex-col gap-3 p-4 rounded-lg bg-black/40 border border-cyan-500/20">
-                                            <div className="flex items-start gap-3 text-xs text-cyan-300">
-                                                <Shield className="w-4 h-4 shrink-0" />
+                                    {!stealthLinkKey && (
+                                        <div className="flex flex-col gap-3 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 animate-pulse">
+                                            <div className="flex items-start gap-3 text-xs text-yellow-200">
+                                                <AlertTriangle className="w-4 h-4 shrink-0 text-yellow-400" />
                                                 <p>
-                                                    Your current link uses your public wallet address.
-                                                    Enable a <span className="text-white font-bold">Zero-Knowledge Identifier</span> to hide it.
+                                                    <span className="font-bold">Action Required:</span> You have a registered handle but your Stealth Identity is not unlocked.
+                                                    You must sign to unlock your private profile and view funds.
                                                 </p>
                                             </div>
                                             <Button
-                                                variant="outline"
+                                                variant="default"
                                                 size="sm"
-                                                className="border-cyan-500/50 text-cyan-400 hover:bg-cyan-500/10 h-8 text-xs font-mono"
+                                                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold h-9 text-xs font-mono w-full"
                                                 onClick={deriveIdentity}
                                                 disabled={derivingIdentity}
                                             >
@@ -854,7 +989,7 @@ export default function Dashboard() {
                                                 ) : (
                                                     <Zap className="w-3 h-3 mr-2" />
                                                 )}
-                                                Secure My Link (One-time Sign)
+                                                Unlock Stealth Profile
                                             </Button>
                                         </div>
                                     )}
